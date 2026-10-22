@@ -1,4 +1,4 @@
-//#region node_modules/.nitro/vite/services/ssr/assets/prazos-D4IqLRaN.js
+//#region node_modules/.nitro/vite/services/ssr/assets/prazos-3B5T3wUv.js
 var TIPOS = [
 	"Requerimentos",
 	"Projetos de Lei",
@@ -93,7 +93,13 @@ function normalizarProcesso(p) {
 	return {
 		...p,
 		tipo,
-		equipeId: p.equipeId ?? null
+		equipeId: p.equipeId ?? null,
+		autorId: p.autorId ?? null,
+		autorNome: p.autorNome ?? "",
+		historico: (p.historico ?? []).map((item) => ({
+			...item,
+			autorNome: item.autorNome ?? ""
+		}))
 	};
 }
 function avisoKey(p, now = /* @__PURE__ */ new Date()) {

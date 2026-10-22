@@ -3,13 +3,13 @@ import { n as require_react } from "../_libs/@radix-ui/react-compose-refs+[...].
 import { n as require_jsx_runtime } from "../_libs/radix-ui__react-context+react.mjs";
 import { a as DialogOverlay, i as DialogDescription, n as DialogClose, o as DialogPortal, r as DialogContent, s as DialogTitle, t as Dialog } from "../_libs/@radix-ui/react-dialog+[...].mjs";
 import { a as getServerFnById, i as TSS_SERVER_FUNCTION, r as createServerFn } from "./ssr.mjs";
-import { i as signOut } from "./client-1vAx-gM_.mjs";
-import { t as authMiddleware } from "./middleware-BzA1xIQx.mjs";
-import { a as hasGateSessionMarker } from "./server-CD4CFjmr.mjs";
-import { a as Search, c as Plus, d as CalendarClock, f as Bell, i as Trash2, l as Pencil, n as Users, o as Scale, p as BellOff, s as RotateCcw, t as X, u as Check } from "../_libs/lucide-react.mjs";
-import { n as useCurrentUser, r as useCurrentUserState, t as TelaConta } from "./tela-conta-CwtgSTuz.mjs";
-import { a as daysUntil, c as marcarAvisos, d as precisaAviso, f as todayIso, i as avisosJaEnviados, l as ordenar, n as addDaysIso, o as formatDate, p as urgencia, r as avisoKey, s as lerProcessosLocais, t as TIPOS, u as prazoLabel } from "./prazos-D4IqLRaN.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/routes-CkZQNRFJ.js
+import { i as signOut, t as authClient } from "./client-1vAx-gM_.mjs";
+import { t as authMiddleware } from "./middleware-CBpQHnaw.mjs";
+import { a as hasGateSessionMarker } from "./server-D8noYjSA.mjs";
+import { a as Search, c as Plus, d as ChartColumn, f as CalendarClock, i as Trash2, l as Pencil, m as BellOff, n as Users, p as Bell, s as RotateCcw, t as X, u as Check } from "../_libs/lucide-react.mjs";
+import { n as useCurrentUser, r as useCurrentUserState, t as TelaConta } from "./tela-conta-C_HLEPub.mjs";
+import { a as daysUntil, c as marcarAvisos, d as precisaAviso, f as todayIso, i as avisosJaEnviados, l as ordenar, n as addDaysIso, o as formatDate, p as urgencia, r as avisoKey, s as lerProcessosLocais, t as TIPOS, u as prazoLabel } from "./prazos-3B5T3wUv.mjs";
+//#region node_modules/.nitro/vite/services/ssr/assets/routes-Z-zCzAr7.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 var subscribeToNothing = () => () => {};
@@ -35,7 +35,7 @@ function UserButton() {
 				alt: "",
 				className: "h-8 w-8 rounded-full object-cover"
 			}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-				className: "grid h-8 w-8 place-items-center rounded-full bg-black/10 text-sm font-medium dark:bg-white/20",
+				className: "grid h-8 w-8 place-items-center rounded-full bg-pine-soft text-sm font-medium text-pine",
 				children: label.charAt(0).toUpperCase()
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
@@ -50,7 +50,7 @@ function UserButton() {
 					signOut().catch(() => setSigningOut(false));
 				},
 				className: "cursor-pointer text-sm underline-offset-4 opacity-70 hover:underline disabled:cursor-wait disabled:no-underline",
-				children: signingOut ? "Signing out…" : "Sign out"
+				children: signingOut ? "Saindo…" : "Sair"
 			})
 		]
 	});
@@ -91,7 +91,9 @@ function exigirProcesso(input) {
 		alertaDias: alerta,
 		status: bruto.status,
 		historico: historicoOk(bruto.historico),
-		equipeId: equipeIdOk(bruto.equipeId)
+		equipeId: equipeIdOk(bruto.equipeId),
+		autorId: typeof bruto.autorId === "string" && bruto.autorId.trim() ? bruto.autorId.trim().slice(0, 80) : null,
+		autorNome: typeof bruto.autorNome === "string" ? bruto.autorNome.trim().slice(0, 80) : ""
 	};
 }
 function equipeIdOk(value) {
@@ -113,7 +115,8 @@ function historicoOk(value) {
 		return [{
 			id: nota.id.slice(0, 80),
 			em: typeof nota.em === "string" ? nota.em.slice(0, 40) : (/* @__PURE__ */ new Date()).toISOString(),
-			texto: texto.slice(0, 2e3)
+			texto: texto.slice(0, 2e3),
+			autorNome: typeof nota.autorNome === "string" ? nota.autorNome.trim().slice(0, 80) : ""
 		}];
 	});
 }
@@ -156,6 +159,179 @@ var removerDaEquipe = createServerFn({ method: "POST" }).validator((input) => {
 		email: emailOk(bruto.email)
 	};
 }).middleware([authMiddleware]).handler(createSsrRpc("f2310c1977299419f856ebb7e928b0ec4ae301e0341553426bdd0f2d860302af"));
+var ORDEM_TIPO = [
+	"Requerimentos",
+	"Indicações",
+	"Projetos de Lei",
+	"Outros"
+];
+function PainelEstatisticas({ processos }) {
+	const porTipo = ORDEM_TIPO.map((tipo) => ({
+		tipo,
+		n: processos.filter((p) => p.tipo === tipo).length
+	}));
+	const situacao = [
+		{
+			label: "Vencidos",
+			n: processos.filter((p) => urgencia(p) === "vencido").length,
+			cor: "#9a2e2e"
+		},
+		{
+			label: "Vencem hoje",
+			n: processos.filter((p) => urgencia(p) === "hoje").length,
+			cor: "#9a2e2e"
+		},
+		{
+			label: "Vencendo",
+			n: processos.filter((p) => urgencia(p) === "proximo").length,
+			cor: "#7a4510"
+		},
+		{
+			label: "No prazo",
+			n: processos.filter((p) => urgencia(p) === "ok").length,
+			cor: "#1c4738"
+		},
+		{
+			label: "Concluídos",
+			n: processos.filter((p) => p.status === "concluido").length,
+			cor: "#6d665c"
+		}
+	];
+	const maiorTipo = Math.max(1, ...porTipo.map((item) => item.n));
+	const total = processos.length;
+	const abertos = processos.filter((p) => p.status === "andamento").length;
+	if (total === 0) return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+		className: "mt-4 rounded-2xl border border-dashed border-line bg-sheet px-6 py-12 text-center",
+		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+			className: "font-display text-2xl text-ink",
+			children: "Ainda sem números"
+		}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+			className: "mx-auto mt-2 max-w-sm text-sm text-muted",
+			children: "Lance um processo para ver a distribuição por tipo e por prazo."
+		})]
+	});
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+		className: "mt-4 grid gap-4 lg:grid-cols-[16rem_1fr]",
+		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
+			className: "rounded-2xl border border-line bg-sheet p-4",
+			children: [
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", {
+					className: "font-display text-2xl text-ink",
+					children: "Situação"
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+					className: "mt-1 text-sm text-muted",
+					children: [
+						abertos,
+						" em aberto de ",
+						total
+					]
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Donut, {
+					fatias: situacao,
+					total
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", {
+					className: "mt-2 flex flex-col gap-2",
+					children: situacao.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", {
+						className: "flex items-center justify-between gap-3 text-sm",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+							className: "flex items-center gap-2 text-ink",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+								className: "size-2.5 rounded-full",
+								style: { background: item.cor }
+							}), item.label]
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+							className: "font-medium text-ink",
+							children: item.n
+						})]
+					}, item.label))
+				})
+			]
+		}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
+			className: "rounded-2xl border border-line bg-sheet p-4",
+			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", {
+				className: "font-display text-2xl text-ink",
+				children: "Por tipo"
+			}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", {
+				className: "mt-4 flex flex-col gap-4",
+				children: porTipo.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "flex items-baseline justify-between gap-3 text-sm",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+						className: "font-medium text-ink",
+						children: item.tipo
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+						className: "text-muted",
+						children: item.n
+					})]
+				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+					className: "mt-2 h-3 overflow-hidden rounded-full bg-paper",
+					role: "presentation",
+					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "h-full rounded-full bg-pine",
+						style: { width: `${Math.max(item.n ? 6 : 0, item.n / maiorTipo * 100)}%` }
+					})
+				})] }, item.tipo))
+			})]
+		})]
+	});
+}
+function Donut({ fatias, total }) {
+	const r = 46;
+	const c = 2 * Math.PI * r;
+	let offset = 0;
+	const usadas = fatias.filter((f) => f.n > 0);
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("svg", {
+		viewBox: "0 0 140 140",
+		className: "mx-auto mt-2 size-40",
+		role: "img",
+		"aria-label": `${total} processos no gráfico`,
+		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("circle", {
+				cx: "70",
+				cy: "70",
+				r,
+				fill: "none",
+				stroke: "#e3dcd0",
+				strokeWidth: "16"
+			}),
+			usadas.map((fatia) => {
+				const len = fatia.n / total * c;
+				const el = /* @__PURE__ */ (0, import_jsx_runtime.jsx)("circle", {
+					cx: "70",
+					cy: "70",
+					r,
+					fill: "none",
+					stroke: fatia.cor,
+					strokeWidth: "16",
+					strokeDasharray: `${len} ${c - len}`,
+					strokeDashoffset: -offset,
+					transform: "rotate(-90 70 70)"
+				}, fatia.label);
+				offset += len;
+				return el;
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("text", {
+				x: "70",
+				y: "66",
+				textAnchor: "middle",
+				fill: "#1b1915",
+				fontSize: "28",
+				fontFamily: "Fraunces, Georgia, serif",
+				children: total
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("text", {
+				x: "70",
+				y: "84",
+				textAnchor: "middle",
+				fill: "#6d665c",
+				fontSize: "11",
+				fontFamily: "Outfit, sans-serif",
+				children: "processos"
+			})
+		]
+	});
+}
 var FILTROS = [
 	{
 		id: "abertos",
@@ -192,6 +368,87 @@ var ALERTA_OPCOES = [
 	15,
 	30
 ];
+var ABAS_TIPO = [
+	{
+		id: "todos",
+		label: "Todos"
+	},
+	{
+		id: "Requerimentos",
+		label: "Requerimentos"
+	},
+	{
+		id: "Indicações",
+		label: "Indicações"
+	},
+	{
+		id: "Projetos de Lei",
+		label: "Projetos de Lei"
+	},
+	{
+		id: "Outros",
+		label: "Outros"
+	}
+];
+function evento(texto, autorNome) {
+	return {
+		id: crypto.randomUUID(),
+		em: (/* @__PURE__ */ new Date()).toISOString(),
+		texto,
+		autorNome
+	};
+}
+function textoMudanca(antes, form) {
+	const partes = [];
+	if (antes.numero !== form.numero.trim()) partes.push("o número");
+	if (antes.parte !== form.parte.trim()) partes.push("a parte");
+	if (antes.assunto !== form.assunto.trim()) partes.push("o assunto");
+	if (antes.tipo !== form.tipo) partes.push(`o tipo para ${form.tipo}`);
+	if (antes.dataLancamento !== form.dataLancamento) partes.push("a data de lançamento");
+	if (antes.prazo !== form.prazo) partes.push(`o prazo para ${formatDate(form.prazo)}`);
+	if (antes.alertaDias !== form.alertaDias) partes.push("a antecedência do aviso");
+	if (!partes.length) return null;
+	if (partes.length === 1) return `Alterou ${partes[0]}.`;
+	const ultimo = partes.pop();
+	return `Alterou ${partes.join(", ")} e ${ultimo}.`;
+}
+function classificar(lista, campo, dir) {
+	const fator = dir === "asc" ? 1 : -1;
+	return [...lista].sort((a, b) => {
+		const numero = a.numero.localeCompare(b.numero, "pt-BR", { numeric: true });
+		return (campo === "numero" ? numero : campo === "tipo" ? a.tipo.localeCompare(b.tipo, "pt-BR") || numero : a.prazo.localeCompare(b.prazo) || numero) * fator;
+	});
+}
+function reduzirFoto(file) {
+	return new Promise((resolve, reject) => {
+		if (!file.type.startsWith("image/") || file.size > 8e6) {
+			reject(/* @__PURE__ */ new Error("foto"));
+			return;
+		}
+		const url = URL.createObjectURL(file);
+		const img = new Image();
+		img.onload = () => {
+			const escala = Math.min(1, 256 / Math.max(img.width, img.height));
+			const canvas = document.createElement("canvas");
+			canvas.width = Math.max(1, Math.round(img.width * escala));
+			canvas.height = Math.max(1, Math.round(img.height * escala));
+			const ctx = canvas.getContext("2d");
+			if (!ctx) {
+				URL.revokeObjectURL(url);
+				reject(/* @__PURE__ */ new Error("foto"));
+				return;
+			}
+			ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+			URL.revokeObjectURL(url);
+			resolve(canvas.toDataURL("image/jpeg", .82));
+		};
+		img.onerror = () => {
+			URL.revokeObjectURL(url);
+			reject(/* @__PURE__ */ new Error("foto"));
+		};
+		img.src = url;
+	});
+}
 function emptyForm() {
 	return {
 		numero: "",
@@ -262,6 +519,15 @@ function PrazosApp() {
 	const [toast, setToast] = (0, import_react.useState)("");
 	const [equipes, setEquipes] = (0, import_react.useState)([]);
 	const [equipeAtual, setEquipeAtual] = (0, import_react.useState)(null);
+	const [tipoAba, setTipoAba] = (0, import_react.useState)("todos");
+	const [ordemCampo, setOrdemCampo] = (0, import_react.useState)("prazo");
+	const [ordemDir, setOrdemDir] = (0, import_react.useState)("asc");
+	const [guia, setGuia] = (0, import_react.useState)("lista");
+	const [perfilOpen, setPerfilOpen] = (0, import_react.useState)(false);
+	const [nomePerfil, setNomePerfil] = (0, import_react.useState)("");
+	const [fotoPerfil, setFotoPerfil] = (0, import_react.useState)(null);
+	const [salvandoPerfil, setSalvandoPerfil] = (0, import_react.useState)(false);
+	const meuNome = user?.displayName?.trim() || "Sem nome";
 	(0, import_react.useEffect)(() => {
 		if (typeof Notification === "undefined") setPerm("unsupported");
 		else setPerm(Notification.permission);
@@ -361,21 +627,27 @@ function PrazosApp() {
 	}, [toast]);
 	const filtrados = (0, import_react.useMemo)(() => {
 		const q = busca.trim().toLowerCase();
-		return ordenar(processos.filter((p) => {
+		return classificar(processos.filter((p) => {
 			const u = urgencia(p);
-			if (!(filtro === "todos" || filtro === "abertos" && p.status === "andamento" || filtro === "atencao" && precisaAviso(p) || filtro === "vencidos" && u === "vencido" || filtro === "prazo" && u === "ok" || filtro === "concluidos" && p.status === "concluido")) return false;
+			const passaFiltro = filtro === "todos" || filtro === "abertos" && p.status === "andamento" || filtro === "atencao" && precisaAviso(p) || filtro === "vencidos" && u === "vencido" || filtro === "prazo" && u === "ok" || filtro === "concluidos" && p.status === "concluido";
+			const passaTipo = tipoAba === "todos" || p.tipo === tipoAba;
+			if (!passaFiltro || !passaTipo) return false;
 			if (!q) return true;
 			return [
 				p.numero,
 				p.parte,
 				p.assunto,
-				p.tipo
+				p.tipo,
+				p.autorNome
 			].join(" ").toLowerCase().includes(q);
-		}));
+		}), ordemCampo, ordemDir);
 	}, [
 		processos,
 		filtro,
-		busca
+		busca,
+		tipoAba,
+		ordemCampo,
+		ordemDir
 	]);
 	const contagem = (0, import_react.useMemo)(() => {
 		let vencidos = 0;
@@ -437,6 +709,10 @@ function PrazosApp() {
 		if (problemas.length) return;
 		const nota = form.nota.trim();
 		if (editing) {
+			const mudou = textoMudanca(editing, form);
+			const extra = [];
+			if (mudou) extra.push(evento(mudou, meuNome));
+			if (nota) extra.push(evento(nota, meuNome));
 			const atualizado = {
 				...editing,
 				numero: form.numero.trim(),
@@ -446,11 +722,7 @@ function PrazosApp() {
 				dataLancamento: form.dataLancamento,
 				prazo: form.prazo,
 				alertaDias: form.alertaDias,
-				historico: nota ? [...editing.historico, {
-					id: crypto.randomUUID(),
-					em: (/* @__PURE__ */ new Date()).toISOString(),
-					texto: nota
-				}] : editing.historico
+				historico: [...editing.historico, ...extra]
 			};
 			if (await persistir(processos.map((p) => p.id === atualizado.id ? atualizado : p), atualizado, null, "Processo atualizado")) setFormOpen(false);
 			return;
@@ -465,12 +737,10 @@ function PrazosApp() {
 			prazo: form.prazo,
 			alertaDias: form.alertaDias,
 			status: "andamento",
-			historico: nota ? [{
-				id: crypto.randomUUID(),
-				em: (/* @__PURE__ */ new Date()).toISOString(),
-				texto: nota
-			}] : [],
-			equipeId: equipeAtual
+			historico: nota ? [evento("Lançou o processo.", meuNome), evento(nota, meuNome)] : [evento("Lançou o processo.", meuNome)],
+			equipeId: equipeAtual,
+			autorId: user?.id ?? null,
+			autorNome: meuNome
 		};
 		if (await persistir([criado, ...processos], criado, null, "Processo lançado")) setFormOpen(false);
 	}
@@ -483,11 +753,7 @@ function PrazosApp() {
 		const atualizado = {
 			...atual,
 			prazo: novoPrazo || atual.prazo,
-			historico: [...atual.historico, {
-				id: crypto.randomUUID(),
-				em: (/* @__PURE__ */ new Date()).toISOString(),
-				texto
-			}]
+			historico: [...atual.historico, evento(texto, meuNome)]
 		};
 		if (!await persistir(processos.map((p) => p.id === atualizado.id ? atualizado : p), atualizado, null, "Andamento registrado")) return;
 		setAndamentoId(null);
@@ -503,7 +769,8 @@ function PrazosApp() {
 			historico: [...atual.historico, {
 				id: crypto.randomUUID(),
 				em: (/* @__PURE__ */ new Date()).toISOString(),
-				texto: "Processo concluído."
+				texto: "Marcou como concluído.",
+				autorNome: meuNome
 			}]
 		};
 		persistir(processos.map((p) => p.id === id ? atualizado : p), atualizado, null, "Marcado como concluído");
@@ -517,7 +784,8 @@ function PrazosApp() {
 			historico: [...atual.historico, {
 				id: crypto.randomUUID(),
 				em: (/* @__PURE__ */ new Date()).toISOString(),
-				texto: "Processo reaberto."
+				texto: "Reabriu o processo.",
+				autorNome: meuNome
 			}]
 		};
 		persistir(processos.map((p) => p.id === id ? atualizado : p), atualizado, null, "Processo reaberto");
@@ -566,6 +834,29 @@ function PrazosApp() {
 			setToast(err instanceof Error ? err.message : "Não foi possível atualizar a equipe.");
 		}
 	}
+	async function salvarPerfil() {
+		const nome = nomePerfil.trim();
+		if (nome.length < 2) {
+			setToast("Informe seu nome.");
+			return;
+		}
+		setSalvandoPerfil(true);
+		try {
+			if ((await authClient.updateUser({
+				name: nome,
+				image: fotoPerfil
+			})).error) {
+				setToast("Não foi possível atualizar o perfil.");
+				return;
+			}
+			setPerfilOpen(false);
+			setToast("Perfil atualizado");
+		} catch {
+			setToast("Não foi possível atualizar o perfil.");
+		} finally {
+			setSalvandoPerfil(false);
+		}
+	}
 	async function ativarAvisos() {
 		if (typeof Notification === "undefined") {
 			setPerm("unsupported");
@@ -606,36 +897,39 @@ function PrazosApp() {
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", {
 				className: "flex flex-col gap-4 border-b border-line pb-6 md:flex-row md:items-end md:justify-between",
 				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "flex items-start gap-3",
-					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-						className: "grid size-11 shrink-0 place-items-center rounded-xl bg-pine text-sheet",
-						"aria-hidden": true,
-						children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Scale, {
-							className: "size-5",
-							strokeWidth: 1.75
-						})
-					}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-							className: "text-sm font-medium tracking-wide text-pine",
-							children: "Controle de prazos"
-						}),
-						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h1", {
-							className: "font-display text-4xl leading-none text-ink",
-							children: "Prazos"
-						}),
-						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-							className: "mt-2 max-w-xl text-sm leading-relaxed text-muted",
-							children: "Os processos ficam na sua conta. Entre com o mesmo e-mail em outro navegador para ver prazos e avisos."
-						})
-					] })]
+					className: "flex items-center gap-3",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", {
+						src: "/favicon.svg",
+						alt: "",
+						className: "size-11 shrink-0 rounded-xl"
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+						className: "text-sm font-medium tracking-wide text-pine",
+						children: "Controle de prazos"
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h1", {
+						className: "font-display text-4xl leading-none text-ink",
+						children: "Prazos"
+					})] })]
 				}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 					className: "flex flex-col gap-2 sm:flex-row sm:items-center",
-					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(UserButton, {}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
-						type: "button",
-						onClick: abrirNovo,
-						className: "inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-pine px-4 text-sm font-medium text-sheet sm:w-auto",
-						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Plus, { className: "size-4" }), "Novo processo"]
-					})]
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(UserButton, {}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+							type: "button",
+							onClick: () => {
+								setNomePerfil(user.displayName ?? "");
+								setFotoPerfil(user.profileImageUrl);
+								setPerfilOpen(true);
+							},
+							className: "inline-flex h-11 items-center justify-center rounded-xl border border-line bg-sheet px-4 text-sm font-medium text-ink",
+							children: "Perfil"
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							type: "button",
+							onClick: abrirNovo,
+							className: "inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-pine px-4 text-sm font-medium text-sheet sm:w-auto",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Plus, { className: "size-4" }), "Novo processo"]
+						})
+					]
 				})]
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
@@ -708,7 +1002,20 @@ function PrazosApp() {
 					]
 				}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
 					className: "min-w-0",
-					children: [
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "mb-4 flex gap-2",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+							type: "button",
+							onClick: () => setGuia("lista"),
+							className: "inline-flex h-11 items-center rounded-xl px-4 text-sm font-medium " + (guia === "lista" ? "bg-ink text-sheet" : "border border-line bg-sheet text-ink"),
+							children: "Lista"
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							type: "button",
+							onClick: () => setGuia("estatisticas"),
+							className: "inline-flex h-11 items-center gap-2 rounded-xl px-4 text-sm font-medium " + (guia === "estatisticas" ? "bg-ink text-sheet" : "border border-line bg-sheet text-ink"),
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChartColumn, { className: "size-4" }), "Estatísticas"]
+						})]
+					}), guia === "estatisticas" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PainelEstatisticas, { processos }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
 						atencao.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 							role: "status",
 							"aria-live": "polite",
@@ -764,30 +1071,76 @@ function PrazosApp() {
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 							className: "flex flex-col gap-3",
-							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
-								className: "relative block",
-								children: [
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "sr-only",
-										children: "Buscar processo"
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Search, { className: "pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-										value: busca,
-										onChange: (e) => setBusca(e.target.value),
-										placeholder: "Buscar número, parte ou assunto",
-										className: "h-12 w-full rounded-xl border border-line bg-sheet pr-3 pl-10 text-sm text-ink placeholder:text-muted"
-									})
-								]
-							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-								className: "flex gap-2 overflow-x-auto pb-1",
-								children: FILTROS.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-									type: "button",
-									onClick: () => setFiltro(item.id),
-									className: "h-10 shrink-0 rounded-full px-3 text-sm font-medium " + (filtro === item.id ? "bg-ink text-sheet" : "bg-sheet text-ink border border-line"),
-									children: item.label
-								}, item.id))
-							})]
+							children: [
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+									className: "relative block",
+									children: [
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+											className: "sr-only",
+											children: "Buscar processo"
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Search, { className: "pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" }),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+											value: busca,
+											onChange: (e) => setBusca(e.target.value),
+											placeholder: "Buscar número, parte ou assunto",
+											className: "h-12 w-full rounded-xl border border-line bg-sheet pr-3 pl-10 text-sm text-ink placeholder:text-muted"
+										})
+									]
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+									className: "flex gap-2 overflow-x-auto pb-1",
+									role: "tablist",
+									"aria-label": "Tipo de processo",
+									children: ABAS_TIPO.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+										type: "button",
+										role: "tab",
+										"aria-selected": tipoAba === item.id,
+										onClick: () => setTipoAba(item.id),
+										className: "h-10 shrink-0 rounded-full px-3 text-sm font-medium " + (tipoAba === item.id ? "bg-pine text-sheet" : "border border-line bg-sheet text-ink"),
+										children: item.label
+									}, item.id))
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+									className: "flex gap-2 overflow-x-auto pb-1",
+									children: FILTROS.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+										type: "button",
+										onClick: () => setFiltro(item.id),
+										className: "h-10 shrink-0 rounded-full px-3 text-sm font-medium " + (filtro === item.id ? "bg-ink text-sheet" : "border border-line bg-sheet text-ink"),
+										children: item.label
+									}, item.id))
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "flex flex-wrap items-center gap-2",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+										className: "flex items-center gap-2 text-sm text-muted",
+										children: ["Ordenar", /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", {
+											value: ordemCampo,
+											onChange: (e) => setOrdemCampo(e.target.value),
+											className: "h-10 rounded-full border border-line bg-sheet px-3 text-sm text-ink",
+											children: [
+												/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
+													value: "numero",
+													children: "Número"
+												}),
+												/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
+													value: "tipo",
+													children: "Tipo"
+												}),
+												/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
+													value: "prazo",
+													children: "Prazo"
+												})
+											]
+										})]
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+										type: "button",
+										onClick: () => setOrdemDir((dir) => dir === "asc" ? "desc" : "asc"),
+										className: "h-10 rounded-full border border-line bg-sheet px-3 text-sm font-medium text-ink",
+										children: ordemDir === "asc" ? "Crescente" : "Decrescente"
+									})]
+								})
+							]
 						}),
 						filtrados.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 							className: "mt-6 rounded-2xl border border-dashed border-line bg-sheet px-6 py-12 text-center",
@@ -822,7 +1175,7 @@ function PrazosApp() {
 								onExcluir: () => setDeleteId(p.id)
 							}, p.id))
 						})
-					]
+					] })]
 				})]
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Dialog, {
@@ -904,7 +1257,7 @@ function PrazosApp() {
 											tipo: e.target.value
 										}),
 										className: inputCls,
-										children: TIPOS.map((tipo) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { children: tipo }, tipo))
+										children: ABAS_TIPO.filter((item) => item.id !== "todos").map((tipo) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { children: tipo.label }, tipo.id))
 									})
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
@@ -1065,6 +1418,88 @@ function PrazosApp() {
 					]
 				})] })
 			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Dialog, {
+				open: perfilOpen,
+				onOpenChange: setPerfilOpen,
+				children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(DialogPortal, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(DialogOverlay, { className: "fixed inset-0 bg-ink/40" }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(DialogContent, {
+					className: "fixed inset-x-3 top-1/2 z-10 max-h-[90vh] -translate-y-1/2 overflow-y-auto rounded-2xl border border-line bg-sheet p-5 md:left-1/2 md:w-full md:max-w-md md:-translate-x-1/2",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(DialogTitle, {
+							className: "font-display text-2xl text-ink",
+							children: "Seu perfil"
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(DialogDescription, {
+							className: "mt-1 text-sm text-muted",
+							children: "O nome aparece como autor dos lançamentos e andamentos."
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", {
+							className: "mt-4 flex flex-col gap-3",
+							onSubmit: (event) => {
+								event.preventDefault();
+								salvarPerfil();
+							},
+							children: [
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "flex items-center gap-3",
+									children: [fotoPerfil ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", {
+										src: fotoPerfil,
+										alt: "",
+										className: "size-16 rounded-full object-cover"
+									}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+										className: "grid size-16 place-items-center rounded-full bg-pine-soft text-xl font-medium text-pine",
+										children: (nomePerfil || "P").charAt(0).toUpperCase()
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "flex flex-col gap-2",
+										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+											className: "inline-flex h-11 cursor-pointer items-center rounded-xl border border-line px-3 text-sm font-medium text-ink",
+											children: ["Escolher foto", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+												type: "file",
+												accept: "image/jpeg,image/png,image/webp",
+												className: "sr-only",
+												onChange: (event) => {
+													const file = event.target.files?.[0];
+													event.target.value = "";
+													if (!file) return;
+													reduzirFoto(file).then(setFotoPerfil).catch(() => setToast("Não foi possível usar esta foto."));
+												}
+											})]
+										}), fotoPerfil && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+											type: "button",
+											onClick: () => setFotoPerfil(null),
+											className: "inline-flex h-11 items-center text-sm text-seal",
+											children: "Remover foto"
+										})]
+									})]
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Campo, {
+									label: "Nome",
+									children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+										value: nomePerfil,
+										onChange: (event) => setNomePerfil(event.target.value),
+										className: inputCls,
+										required: true,
+										minLength: 2,
+										maxLength: 80
+									})
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "flex gap-2 pt-1",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(DialogClose, {
+										type: "button",
+										className: "inline-flex h-11 flex-1 items-center justify-center rounded-xl border border-line text-sm font-medium",
+										children: "Cancelar"
+									}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+										type: "submit",
+										disabled: salvandoPerfil,
+										className: "inline-flex h-11 flex-1 items-center justify-center rounded-xl bg-pine text-sm font-medium text-sheet disabled:opacity-60",
+										children: "Salvar perfil"
+									})]
+								})
+							]
+						})
+					]
+				})] })
+			}),
 			toast && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 				role: "status",
 				className: "fixed bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full bg-ink px-4 py-2 text-sm text-sheet",
@@ -1127,6 +1562,10 @@ function ProcessoCard({ processo, onEditar, onAndamento, onConcluir, onReabrir, 
 					className: "mt-1 text-xs tracking-wide text-muted",
 					children: processo.numero
 				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+					className: "mt-1 text-xs text-muted",
+					children: ["Lançado por ", processo.autorNome || "sem nome"]
+				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 					className: "mt-3 grid grid-cols-2 gap-3 text-sm",
 					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
@@ -1156,12 +1595,16 @@ function ProcessoCard({ processo, onEditar, onAndamento, onConcluir, onReabrir, 
 				}),
 				ultimo && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
 					className: "mt-3 text-sm leading-relaxed text-ink",
-					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
 						className: "text-muted",
-						children: "Último andamento · "
+						children: [
+							"Último · ",
+							ultimo.autorNome || "sem nome",
+							" · "
+						]
 					}), ultimo.texto]
 				}),
-				processo.historico.length > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+				processo.historico.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 					type: "button",
 					onClick: () => setAberto((v) => !v),
 					className: "mt-2 text-sm font-medium text-pine",
@@ -1171,14 +1614,18 @@ function ProcessoCard({ processo, onEditar, onAndamento, onConcluir, onReabrir, 
 					className: "mt-2 flex flex-col gap-2 border-t border-line pt-2",
 					children: [...processo.historico].reverse().map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", {
 						className: "text-sm",
-						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
 							className: "text-xs text-muted",
-							children: new Intl.DateTimeFormat("pt-BR", {
-								day: "2-digit",
-								month: "short",
-								hour: "2-digit",
-								minute: "2-digit"
-							}).format(new Date(item.em))
+							children: [
+								new Intl.DateTimeFormat("pt-BR", {
+									day: "2-digit",
+									month: "short",
+									hour: "2-digit",
+									minute: "2-digit"
+								}).format(new Date(item.em)),
+								" · ",
+								item.autorNome || "sem nome"
+							]
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
 							className: "mt-0.5 block text-ink",
 							children: item.texto

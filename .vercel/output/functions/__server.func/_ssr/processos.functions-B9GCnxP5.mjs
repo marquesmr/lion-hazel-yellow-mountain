@@ -1,9 +1,9 @@
 import { r as createServerFn } from "./ssr.mjs";
-import { r as getSql } from "./db-DmA7jbVS.mjs";
+import { r as getSql } from "./db-PBIMHpcn.mjs";
 import { t as createServerRpc } from "./createServerRpc-CcvdN_gc.mjs";
-import { t as authMiddleware } from "./middleware-BzA1xIQx.mjs";
-import { t as TIPOS } from "./prazos-D4IqLRaN.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/processos.functions-C5MRb_IN.js
+import { t as authMiddleware } from "./middleware-CBpQHnaw.mjs";
+import { t as TIPOS } from "./prazos-3B5T3wUv.mjs";
+//#region node_modules/.nitro/vite/services/ssr/assets/processos.functions-B9GCnxP5.js
 function exigirProcesso(input) {
 	if (!input || typeof input !== "object") throw new Error("Dados inválidos");
 	const bruto = input;
@@ -28,7 +28,9 @@ function exigirProcesso(input) {
 		alertaDias: alerta,
 		status: bruto.status,
 		historico: historicoOk(bruto.historico),
-		equipeId: equipeIdOk(bruto.equipeId)
+		equipeId: equipeIdOk(bruto.equipeId),
+		autorId: typeof bruto.autorId === "string" && bruto.autorId.trim() ? bruto.autorId.trim().slice(0, 80) : null,
+		autorNome: typeof bruto.autorNome === "string" ? bruto.autorNome.trim().slice(0, 80) : ""
 	};
 }
 function equipeIdOk(value) {
@@ -50,7 +52,8 @@ function historicoOk(value) {
 		return [{
 			id: nota.id.slice(0, 80),
 			em: typeof nota.em === "string" ? nota.em.slice(0, 40) : (/* @__PURE__ */ new Date()).toISOString(),
-			texto: texto.slice(0, 2e3)
+			texto: texto.slice(0, 2e3),
+			autorNome: typeof nota.autorNome === "string" ? nota.autorNome.trim().slice(0, 80) : ""
 		}];
 	});
 }
@@ -74,7 +77,9 @@ function linhaParaProcesso(linha) {
 		alertaDias: Number(linha.alerta_dias),
 		status,
 		historico,
-		equipeId: linha.team_id
+		equipeId: linha.team_id,
+		autorId: linha.autor_id,
+		autorNome: linha.autor_nome ?? ""
 	};
 }
 var listarProcessos_createServerFn_handler = createServerRpc({
@@ -89,19 +94,27 @@ var listarProcessos = createServerFn({ method: "GET" }).validator((equipeId) => 
 }).middleware([authMiddleware]).handler(listarProcessos_createServerFn_handler, async ({ context, data: equipeId }) => {
 	const sql = await getSql();
 	if (!equipeId) return (await sql`
-        select id, numero, parte, assunto, tipo, data_lancamento, prazo, alerta_dias, status, historico, team_id
-        from processos
-        where user_id = ${context.userId} and team_id is null
-        order by prazo asc
+        select p.id, p.numero, p.parte, p.assunto, p.tipo, p.data_lancamento, p.prazo,
+               p.alerta_dias, p.status, p.historico, p.team_id,
+               coalesce(nullif(p.autor_id, ''), p.user_id) as autor_id,
+               coalesce(nullif(p.autor_nome, ''), u.name, '') as autor_nome
+        from processos p
+        left join "user" u on u.id = p.user_id
+        where p.user_id = ${context.userId} and p.team_id is null
+        order by p.prazo asc
       `).map(linhaParaProcesso);
 	if (!(await sql`
       select 1 as ok from equipe_membros where equipe_id = ${equipeId} and user_id = ${context.userId}
     `).length) throw new Error("Você não faz parte desta equipe.");
 	return (await sql`
-      select id, numero, parte, assunto, tipo, data_lancamento, prazo, alerta_dias, status, historico, team_id
-      from processos
-      where team_id = ${equipeId}
-      order by prazo asc
+      select p.id, p.numero, p.parte, p.assunto, p.tipo, p.data_lancamento, p.prazo,
+             p.alerta_dias, p.status, p.historico, p.team_id,
+             coalesce(nullif(p.autor_id, ''), p.user_id) as autor_id,
+             coalesce(nullif(p.autor_nome, ''), u.name, '') as autor_nome
+      from processos p
+      left join "user" u on u.id = p.user_id
+      where p.team_id = ${equipeId}
+      order by p.prazo asc
     `).map(linhaParaProcesso);
 });
 var salvarProcesso_createServerFn_handler = createServerRpc({
@@ -111,53 +124,62 @@ var salvarProcesso_createServerFn_handler = createServerRpc({
 }, (opts) => salvarProcesso.__executeServer(opts));
 var salvarProcesso = createServerFn({ method: "POST" }).validator(exigirProcesso).middleware([authMiddleware]).handler(salvarProcesso_createServerFn_handler, async ({ context, data }) => {
 	const sql = await getSql();
-	const historico = JSON.stringify(data.historico);
+	const autorNome = ((await sql`select name from "user" where id = ${context.userId}`)[0]?.name || "Sem nome").trim().slice(0, 80) || "Sem nome";
 	if (data.equipeId) {
 		if (!(await sql`
         select 1 as ok from equipe_membros where equipe_id = ${data.equipeId} and user_id = ${context.userId}
       `).length) throw new Error("Você não faz parte desta equipe.");
 	}
-	const salvos = data.equipeId ? await sql`
-          insert into processos (
-            id, user_id, numero, parte, assunto, tipo, data_lancamento, prazo, alerta_dias, status, historico, team_id
-          ) values (
-            ${data.id}, ${context.userId}, ${data.numero}, ${data.parte}, ${data.assunto}, ${data.tipo},
-            ${data.dataLancamento}, ${data.prazo}, ${data.alertaDias}, ${data.status}, ${historico}, ${data.equipeId}
-          )
-          on conflict (id) do update set
-            numero = excluded.numero,
-            parte = excluded.parte,
-            assunto = excluded.assunto,
-            tipo = excluded.tipo,
-            data_lancamento = excluded.data_lancamento,
-            prazo = excluded.prazo,
-            alerta_dias = excluded.alerta_dias,
-            status = excluded.status,
-            historico = excluded.historico
-          where processos.team_id = ${data.equipeId}
-            and exists (
-              select 1 from equipe_membros em
-              where em.equipe_id = processos.team_id and em.user_id = ${context.userId}
+	const existente = await sql`
+      select historico, user_id, team_id from processos where id = ${data.id}
+    `;
+	let anterior = [];
+	if (existente.length) try {
+		anterior = historicoOk(JSON.parse(existente[0].historico || "[]"));
+	} catch {
+		anterior = [];
+	}
+	const conhecidos = new Map(anterior.map((item) => [item.id, item.autorNome]));
+	let historico = data.historico.map((item) => ({
+		...item,
+		autorNome: conhecidos.get(item.id) || autorNome
+	}));
+	if (!existente.length && historico.length === 0) historico = [{
+		id: crypto.randomUUID(),
+		em: (/* @__PURE__ */ new Date()).toISOString(),
+		texto: "Lançou o processo.",
+		autorNome
+	}];
+	if (existente.length) {
+		const row = existente[0];
+		if (!(row.team_id ? row.team_id === data.equipeId : !data.equipeId && row.user_id === context.userId)) throw new Error("Não foi possível salvar");
+	}
+	const historicoJson = JSON.stringify(historico);
+	const salvos = existente.length ? await sql`
+          update processos set
+            numero = ${data.numero},
+            parte = ${data.parte},
+            assunto = ${data.assunto},
+            tipo = ${data.tipo},
+            data_lancamento = ${data.dataLancamento},
+            prazo = ${data.prazo},
+            alerta_dias = ${data.alertaDias},
+            status = ${data.status},
+            historico = ${historicoJson}
+          where id = ${data.id}
+            and (
+              (${data.equipeId}::text is not null and team_id = ${data.equipeId})
+              or (${data.equipeId}::text is null and team_id is null and user_id = ${context.userId})
             )
           returning id
         ` : await sql`
           insert into processos (
-            id, user_id, numero, parte, assunto, tipo, data_lancamento, prazo, alerta_dias, status, historico, team_id
+            id, user_id, numero, parte, assunto, tipo, data_lancamento, prazo, alerta_dias, status, historico, team_id, autor_id, autor_nome
           ) values (
             ${data.id}, ${context.userId}, ${data.numero}, ${data.parte}, ${data.assunto}, ${data.tipo},
-            ${data.dataLancamento}, ${data.prazo}, ${data.alertaDias}, ${data.status}, ${historico}, null
+            ${data.dataLancamento}, ${data.prazo}, ${data.alertaDias}, ${data.status}, ${historicoJson},
+            ${data.equipeId}, ${context.userId}, ${autorNome}
           )
-          on conflict (id) do update set
-            numero = excluded.numero,
-            parte = excluded.parte,
-            assunto = excluded.assunto,
-            tipo = excluded.tipo,
-            data_lancamento = excluded.data_lancamento,
-            prazo = excluded.prazo,
-            alerta_dias = excluded.alerta_dias,
-            status = excluded.status,
-            historico = excluded.historico
-          where processos.team_id is null and processos.user_id = ${context.userId}
           returning id
         `;
 	if (!salvos.length) throw new Error("Não foi possível salvar");

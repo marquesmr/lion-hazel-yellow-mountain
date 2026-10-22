@@ -153,6 +153,30 @@ var CalendarClock = createLucideIcon("calendar-clock", [
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
+var ChartColumn = createLucideIcon("chart-column", [
+	["path", {
+		d: "M3 3v16a2 2 0 0 0 2 2h16",
+		key: "c24i48"
+	}],
+	["path", {
+		d: "M18 17V9",
+		key: "2bz60n"
+	}],
+	["path", {
+		d: "M13 17V5",
+		key: "1frdt8"
+	}],
+	["path", {
+		d: "M8 17v-3",
+		key: "17ska0"
+	}]
+]);
+/**
+* @license lucide-react v0.510.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
 var Check = createLucideIcon("check", [["path", {
 	d: "M20 6 9 17l-5-5",
 	key: "1gmf2c"
@@ -333,4 +357,4 @@ var X = createLucideIcon("x", [["path", {
 	key: "d8bk6v"
 }]]);
 //#endregion
-export { Search as a, Plus as c, CalendarClock as d, Bell as f, Trash2 as i, Pencil as l, Users as n, Scale as o, BellOff as p, TriangleAlert as r, RotateCcw as s, X as t, Check as u };
+export { Search as a, Plus as c, ChartColumn as d, CalendarClock as f, Trash2 as i, Pencil as l, BellOff as m, Users as n, Scale as o, Bell as p, TriangleAlert as r, RotateCcw as s, X as t, Check as u };

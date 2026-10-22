@@ -3,19 +3,19 @@ import * as Dialog from "@radix-ui/react-dialog";
 import {
   Bell,
   BellOff,
+  BarChart3,
   CalendarClock,
   Check,
   Pencil,
   Plus,
   RotateCcw,
-  Scale,
   Search,
   Trash2,
   Users,
   X,
 } from "lucide-react";
 import {
-  TIPOS,
+  type Andamento,
   type Processo,
   type TipoProcesso,
   addDaysIso,
@@ -33,10 +33,12 @@ import {
   type Urgencia,
 } from "@/lib/prazos";
 import { UserButton } from "@/lib/auth/gates";
+import { authClient } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { apagarProcesso, listarProcessos, salvarProcesso } from "@/lib/processos.functions";
 import { adicionarNaEquipe, criarEquipe, listarEquipes, removerDaEquipe, type Equipe } from "@/lib/equipes.functions";
 import { TelaConta } from "@/components/tela-conta";
+import { PainelEstatisticas } from "@/components/estatisticas";
 
 type Filtro = "abertos" | "atencao" | "vencidos" | "prazo" | "concluidos" | "todos";
 
@@ -61,6 +63,82 @@ const FILTROS: { id: Filtro; label: string }[] = [
 ];
 
 const ALERTA_OPCOES = [1, 2, 3, 5, 7, 10, 15, 30];
+
+const ABAS_TIPO: { id: TipoProcesso | "todos"; label: string }[] = [
+  { id: "todos", label: "Todos" },
+  { id: "Requerimentos", label: "Requerimentos" },
+  { id: "Indicações", label: "Indicações" },
+  { id: "Projetos de Lei", label: "Projetos de Lei" },
+  { id: "Outros", label: "Outros" },
+];
+
+type OrdemCampo = "numero" | "tipo" | "prazo";
+type Guia = "lista" | "estatisticas";
+
+function evento(texto: string, autorNome: string): Andamento {
+  return { id: crypto.randomUUID(), em: new Date().toISOString(), texto, autorNome };
+}
+
+function textoMudanca(antes: Processo, form: FormState): string | null {
+  const partes: string[] = [];
+  if (antes.numero !== form.numero.trim()) partes.push("o número");
+  if (antes.parte !== form.parte.trim()) partes.push("a parte");
+  if (antes.assunto !== form.assunto.trim()) partes.push("o assunto");
+  if (antes.tipo !== form.tipo) partes.push(`o tipo para ${form.tipo}`);
+  if (antes.dataLancamento !== form.dataLancamento) partes.push("a data de lançamento");
+  if (antes.prazo !== form.prazo) partes.push(`o prazo para ${formatDate(form.prazo)}`);
+  if (antes.alertaDias !== form.alertaDias) partes.push("a antecedência do aviso");
+  if (!partes.length) return null;
+  if (partes.length === 1) return `Alterou ${partes[0]}.`;
+  const ultimo = partes.pop();
+  return `Alterou ${partes.join(", ")} e ${ultimo}.`;
+}
+
+function classificar(lista: Processo[], campo: OrdemCampo, dir: "asc" | "desc"): Processo[] {
+  const fator = dir === "asc" ? 1 : -1;
+  return [...lista].sort((a, b) => {
+    const numero = a.numero.localeCompare(b.numero, "pt-BR", { numeric: true });
+    const cmp =
+      campo === "numero"
+        ? numero
+        : campo === "tipo"
+          ? a.tipo.localeCompare(b.tipo, "pt-BR") || numero
+          : a.prazo.localeCompare(b.prazo) || numero;
+    return cmp * fator;
+  });
+}
+
+function reduzirFoto(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith("image/") || file.size > 8_000_000) {
+      reject(new Error("foto"));
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const max = 256;
+      const escala = Math.min(1, max / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.width * escala));
+      canvas.height = Math.max(1, Math.round(img.height * escala));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        URL.revokeObjectURL(url);
+        reject(new Error("foto"));
+        return;
+      }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/jpeg", 0.82));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("foto"));
+    };
+    img.src = url;
+  });
+}
 
 function emptyForm(): FormState {
   return {
@@ -115,6 +193,15 @@ export function PrazosApp() {
   const [toast, setToast] = useState("");
   const [equipes, setEquipes] = useState<Equipe[]>([]);
   const [equipeAtual, setEquipeAtual] = useState<string | null>(null);
+  const [tipoAba, setTipoAba] = useState<TipoProcesso | "todos">("todos");
+  const [ordemCampo, setOrdemCampo] = useState<OrdemCampo>("prazo");
+  const [ordemDir, setOrdemDir] = useState<"asc" | "desc">("asc");
+  const [guia, setGuia] = useState<Guia>("lista");
+  const [perfilOpen, setPerfilOpen] = useState(false);
+  const [nomePerfil, setNomePerfil] = useState("");
+  const [fotoPerfil, setFotoPerfil] = useState<string | null>(null);
+  const [salvandoPerfil, setSalvandoPerfil] = useState(false);
+  const meuNome = user?.displayName?.trim() || "Sem nome";
 
   useEffect(() => {
     if (typeof Notification === "undefined") setPerm("unsupported");
@@ -226,22 +313,22 @@ export function PrazosApp() {
 
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    return ordenar(
-      processos.filter((p) => {
-        const u = urgencia(p);
-        const passaFiltro =
-          filtro === "todos" ||
-          (filtro === "abertos" && p.status === "andamento") ||
-          (filtro === "atencao" && precisaAviso(p)) ||
-          (filtro === "vencidos" && u === "vencido") ||
-          (filtro === "prazo" && u === "ok") ||
-          (filtro === "concluidos" && p.status === "concluido");
-        if (!passaFiltro) return false;
-        if (!q) return true;
-        return [p.numero, p.parte, p.assunto, p.tipo].join(" ").toLowerCase().includes(q);
-      }),
-    );
-  }, [processos, filtro, busca]);
+    const lista = processos.filter((p) => {
+      const u = urgencia(p);
+      const passaFiltro =
+        filtro === "todos" ||
+        (filtro === "abertos" && p.status === "andamento") ||
+        (filtro === "atencao" && precisaAviso(p)) ||
+        (filtro === "vencidos" && u === "vencido") ||
+        (filtro === "prazo" && u === "ok") ||
+        (filtro === "concluidos" && p.status === "concluido");
+      const passaTipo = tipoAba === "todos" || p.tipo === tipoAba;
+      if (!passaFiltro || !passaTipo) return false;
+      if (!q) return true;
+      return [p.numero, p.parte, p.assunto, p.tipo, p.autorNome].join(" ").toLowerCase().includes(q);
+    });
+    return classificar(lista, ordemCampo, ordemDir);
+  }, [processos, filtro, busca, tipoAba, ordemCampo, ordemDir]);
 
   const contagem = useMemo(() => {
     let vencidos = 0;
@@ -304,6 +391,10 @@ export function PrazosApp() {
 
     const nota = form.nota.trim();
     if (editing) {
+      const mudou = textoMudanca(editing, form);
+      const extra: Andamento[] = [];
+      if (mudou) extra.push(evento(mudou, meuNome));
+      if (nota) extra.push(evento(nota, meuNome));
       const atualizado: Processo = {
         ...editing,
         numero: form.numero.trim(),
@@ -313,9 +404,7 @@ export function PrazosApp() {
         dataLancamento: form.dataLancamento,
         prazo: form.prazo,
         alertaDias: form.alertaDias,
-        historico: nota
-          ? [...editing.historico, { id: crypto.randomUUID(), em: new Date().toISOString(), texto: nota }]
-          : editing.historico,
+        historico: [...editing.historico, ...extra],
       };
       const ok = await persistir(
         processos.map((p) => (p.id === atualizado.id ? atualizado : p)),
@@ -337,8 +426,12 @@ export function PrazosApp() {
       prazo: form.prazo,
       alertaDias: form.alertaDias,
       status: "andamento",
-      historico: nota ? [{ id: crypto.randomUUID(), em: new Date().toISOString(), texto: nota }] : [],
+      historico: nota
+        ? [evento("Lançou o processo.", meuNome), evento(nota, meuNome)]
+        : [evento("Lançou o processo.", meuNome)],
       equipeId: equipeAtual,
+      autorId: user?.id ?? null,
+      autorNome: meuNome,
     };
     const ok = await persistir([criado, ...processos], criado, null, "Processo lançado");
     if (ok) setFormOpen(false);
@@ -353,7 +446,7 @@ export function PrazosApp() {
     const atualizado: Processo = {
       ...atual,
       prazo: novoPrazo || atual.prazo,
-      historico: [...atual.historico, { id: crypto.randomUUID(), em: new Date().toISOString(), texto }],
+      historico: [...atual.historico, evento(texto, meuNome)],
     };
     const ok = await persistir(
       processos.map((p) => (p.id === atualizado.id ? atualizado : p)),
@@ -375,7 +468,7 @@ export function PrazosApp() {
       status: "concluido",
       historico: [
         ...atual.historico,
-        { id: crypto.randomUUID(), em: new Date().toISOString(), texto: "Processo concluído." },
+        { id: crypto.randomUUID(), em: new Date().toISOString(), texto: "Marcou como concluído.", autorNome: meuNome },
       ],
     };
     void persistir(
@@ -394,7 +487,7 @@ export function PrazosApp() {
       status: "andamento",
       historico: [
         ...atual.historico,
-        { id: crypto.randomUUID(), em: new Date().toISOString(), texto: "Processo reaberto." },
+        { id: crypto.randomUUID(), em: new Date().toISOString(), texto: "Reabriu o processo.", autorNome: meuNome },
       ],
     };
     void persistir(
@@ -457,6 +550,28 @@ export function PrazosApp() {
     }
   }
 
+  async function salvarPerfil() {
+    const nome = nomePerfil.trim();
+    if (nome.length < 2) {
+      setToast("Informe seu nome.");
+      return;
+    }
+    setSalvandoPerfil(true);
+    try {
+      const resposta = await authClient.updateUser({ name: nome, image: fotoPerfil });
+      if (resposta.error) {
+        setToast("Não foi possível atualizar o perfil.");
+        return;
+      }
+      setPerfilOpen(false);
+      setToast("Perfil atualizado");
+    } catch {
+      setToast("Não foi possível atualizar o perfil.");
+    } finally {
+      setSalvandoPerfil(false);
+    }
+  }
+
   async function ativarAvisos() {
     if (typeof Notification === "undefined") {
       setPerm("unsupported");
@@ -494,20 +609,26 @@ export function PrazosApp() {
   return (
     <div className="mx-auto min-h-screen max-w-6xl px-4 py-6 md:px-8 md:py-8">
       <header className="flex flex-col gap-4 border-b border-line pb-6 md:flex-row md:items-end md:justify-between">
-        <div className="flex items-start gap-3">
-          <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-pine text-sheet" aria-hidden>
-            <Scale className="size-5" strokeWidth={1.75} />
-          </div>
+        <div className="flex items-center gap-3">
+          <img src="/favicon.svg" alt="" className="size-11 shrink-0 rounded-xl" />
           <div>
             <p className="text-sm font-medium tracking-wide text-pine">Controle de prazos</p>
             <h1 className="font-display text-4xl leading-none text-ink">Prazos</h1>
-            <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted">
-              Os processos ficam na sua conta. Entre com o mesmo e-mail em outro navegador para ver prazos e avisos.
-            </p>
           </div>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <UserButton />
+          <button
+            type="button"
+            onClick={() => {
+              setNomePerfil(user.displayName ?? "");
+              setFotoPerfil(user.profileImageUrl);
+              setPerfilOpen(true);
+            }}
+            className="inline-flex h-11 items-center justify-center rounded-xl border border-line bg-sheet px-4 text-sm font-medium text-ink"
+          >
+            Perfil
+          </button>
           <button
             type="button"
             onClick={abrirNovo}
@@ -570,68 +691,132 @@ export function PrazosApp() {
         </aside>
 
         <section className="min-w-0">
-          {atencao.length > 0 && (
-            <div
-              role="status"
-              aria-live="polite"
-              className="mb-4 rounded-2xl border border-line bg-sheet p-4"
+          <div className="mb-4 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setGuia("lista")}
+              className={
+                "inline-flex h-11 items-center rounded-xl px-4 text-sm font-medium " +
+                (guia === "lista" ? "bg-ink text-sheet" : "border border-line bg-sheet text-ink")
+              }
             >
-              <p className="text-sm font-medium text-ink">
-                {atencao.length === 1
-                  ? "1 prazo precisa de atenção"
-                  : `${atencao.length} prazos precisam de atenção`}
-              </p>
-              {equipeSelecionada && (
-                <p className="mt-1 text-sm text-muted">
-                  A equipe {equipeSelecionada.nome} acompanha estes prazos junta — {equipeSelecionada.membros.length}{" "}
-                  {equipeSelecionada.membros.length === 1 ? "pessoa" : "pessoas"}.
-                </p>
-              )}
-              <ul className="mt-3 flex flex-col gap-2">
-                {atencao.slice(0, 4).map((p) => {
-                  const u = urgencia(p);
-                  return (
-                    <li key={p.id} className="flex items-start gap-3 text-sm">
-                      <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${TOM[u].bar}`} />
-                      <span className="min-w-0">
-                        <span className="font-medium text-ink">{p.parte}</span>
-                        <span className="text-muted"> · {p.assunto}</span>
-                        <span className="block text-muted">{prazoLabel(p)} · {formatDate(p.prazo)}</span>
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          )}
-
-          <div className="flex flex-col gap-3">
-            <label className="relative block">
-              <span className="sr-only">Buscar processo</span>
-              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
-              <input
-                value={busca}
-                onChange={(e) => setBusca(e.target.value)}
-                placeholder="Buscar número, parte ou assunto"
-                className="h-12 w-full rounded-xl border border-line bg-sheet pr-3 pl-10 text-sm text-ink placeholder:text-muted"
-              />
-            </label>
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {FILTROS.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setFiltro(item.id)}
-                  className={
-                    "h-10 shrink-0 rounded-full px-3 text-sm font-medium " +
-                    (filtro === item.id ? "bg-ink text-sheet" : "bg-sheet text-ink border border-line")
-                  }
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
+              Lista
+            </button>
+            <button
+              type="button"
+              onClick={() => setGuia("estatisticas")}
+              className={
+                "inline-flex h-11 items-center gap-2 rounded-xl px-4 text-sm font-medium " +
+                (guia === "estatisticas" ? "bg-ink text-sheet" : "border border-line bg-sheet text-ink")
+              }
+            >
+              <BarChart3 className="size-4" />
+              Estatísticas
+            </button>
           </div>
+
+          {guia === "estatisticas" ? (
+            <PainelEstatisticas processos={processos} />
+          ) : (
+            <>
+              {atencao.length > 0 && (
+                <div role="status" aria-live="polite" className="mb-4 rounded-2xl border border-line bg-sheet p-4">
+                  <p className="text-sm font-medium text-ink">
+                    {atencao.length === 1
+                      ? "1 prazo precisa de atenção"
+                      : `${atencao.length} prazos precisam de atenção`}
+                  </p>
+                  {equipeSelecionada && (
+                    <p className="mt-1 text-sm text-muted">
+                      A equipe {equipeSelecionada.nome} acompanha estes prazos junta — {equipeSelecionada.membros.length}{" "}
+                      {equipeSelecionada.membros.length === 1 ? "pessoa" : "pessoas"}.
+                    </p>
+                  )}
+                  <ul className="mt-3 flex flex-col gap-2">
+                    {atencao.slice(0, 4).map((p) => {
+                      const u = urgencia(p);
+                      return (
+                        <li key={p.id} className="flex items-start gap-3 text-sm">
+                          <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${TOM[u].bar}`} />
+                          <span className="min-w-0">
+                            <span className="font-medium text-ink">{p.parte}</span>
+                            <span className="text-muted"> · {p.assunto}</span>
+                            <span className="block text-muted">
+                              {prazoLabel(p)} · {formatDate(p.prazo)}
+                            </span>
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-3">
+                <label className="relative block">
+                  <span className="sr-only">Buscar processo</span>
+                  <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
+                  <input
+                    value={busca}
+                    onChange={(e) => setBusca(e.target.value)}
+                    placeholder="Buscar número, parte ou assunto"
+                    className="h-12 w-full rounded-xl border border-line bg-sheet pr-3 pl-10 text-sm text-ink placeholder:text-muted"
+                  />
+                </label>
+                <div className="flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Tipo de processo">
+                  {ABAS_TIPO.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={tipoAba === item.id}
+                      onClick={() => setTipoAba(item.id)}
+                      className={
+                        "h-10 shrink-0 rounded-full px-3 text-sm font-medium " +
+                        (tipoAba === item.id ? "bg-pine text-sheet" : "border border-line bg-sheet text-ink")
+                      }
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {FILTROS.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setFiltro(item.id)}
+                      className={
+                        "h-10 shrink-0 rounded-full px-3 text-sm font-medium " +
+                        (filtro === item.id ? "bg-ink text-sheet" : "border border-line bg-sheet text-ink")
+                      }
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="flex items-center gap-2 text-sm text-muted">
+                    Ordenar
+                    <select
+                      value={ordemCampo}
+                      onChange={(e) => setOrdemCampo(e.target.value as OrdemCampo)}
+                      className="h-10 rounded-full border border-line bg-sheet px-3 text-sm text-ink"
+                    >
+                      <option value="numero">Número</option>
+                      <option value="tipo">Tipo</option>
+                      <option value="prazo">Prazo</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setOrdemDir((dir) => (dir === "asc" ? "desc" : "asc"))}
+                    className="h-10 rounded-full border border-line bg-sheet px-3 text-sm font-medium text-ink"
+                  >
+                    {ordemDir === "asc" ? "Crescente" : "Decrescente"}
+                  </button>
+                </div>
+              </div>
 
           {filtrados.length === 0 ? (
             <div className="mt-6 rounded-2xl border border-dashed border-line bg-sheet px-6 py-12 text-center">
@@ -672,6 +857,8 @@ export function PrazosApp() {
                 />
               ))}
             </ul>
+          )}
+            </>
           )}
         </section>
       </div>
@@ -741,8 +928,8 @@ export function PrazosApp() {
                     onChange={(e) => setForm({ ...form, tipo: e.target.value as TipoProcesso })}
                     className={inputCls}
                   >
-                    {TIPOS.map((tipo) => (
-                      <option key={tipo}>{tipo}</option>
+                    {ABAS_TIPO.filter((item) => item.id !== "todos").map((tipo) => (
+                      <option key={tipo.id}>{tipo.label}</option>
                     ))}
                   </select>
                 </Campo>
@@ -885,6 +1072,83 @@ export function PrazosApp() {
         </Dialog.Portal>
       </Dialog.Root>
 
+      <Dialog.Root open={perfilOpen} onOpenChange={setPerfilOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-ink/40" />
+          <Dialog.Content className="fixed inset-x-3 top-1/2 z-10 max-h-[90vh] -translate-y-1/2 overflow-y-auto rounded-2xl border border-line bg-sheet p-5 md:left-1/2 md:w-full md:max-w-md md:-translate-x-1/2">
+            <Dialog.Title className="font-display text-2xl text-ink">Seu perfil</Dialog.Title>
+            <Dialog.Description className="mt-1 text-sm text-muted">
+              O nome aparece como autor dos lançamentos e andamentos.
+            </Dialog.Description>
+            <form
+              className="mt-4 flex flex-col gap-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void salvarPerfil();
+              }}
+            >
+              <div className="flex items-center gap-3">
+                {fotoPerfil ? (
+                  <img src={fotoPerfil} alt="" className="size-16 rounded-full object-cover" />
+                ) : (
+                  <span className="grid size-16 place-items-center rounded-full bg-pine-soft text-xl font-medium text-pine">
+                    {(nomePerfil || "P").charAt(0).toUpperCase()}
+                  </span>
+                )}
+                <div className="flex flex-col gap-2">
+                  <label className="inline-flex h-11 cursor-pointer items-center rounded-xl border border-line px-3 text-sm font-medium text-ink">
+                    Escolher foto
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="sr-only"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        if (!file) return;
+                        void reduzirFoto(file)
+                          .then(setFotoPerfil)
+                          .catch(() => setToast("Não foi possível usar esta foto."));
+                      }}
+                    />
+                  </label>
+                  {fotoPerfil && (
+                    <button type="button" onClick={() => setFotoPerfil(null)} className="inline-flex h-11 items-center text-sm text-seal">
+                      Remover foto
+                    </button>
+                  )}
+                </div>
+              </div>
+              <Campo label="Nome">
+                <input
+                  value={nomePerfil}
+                  onChange={(event) => setNomePerfil(event.target.value)}
+                  className={inputCls}
+                  required
+                  minLength={2}
+                  maxLength={80}
+                />
+              </Campo>
+              <div className="flex gap-2 pt-1">
+                <Dialog.Close
+                  type="button"
+                  className="inline-flex h-11 flex-1 items-center justify-center rounded-xl border border-line text-sm font-medium"
+                >
+                  Cancelar
+                </Dialog.Close>
+                <button
+                  type="submit"
+                  disabled={salvandoPerfil}
+                  className="inline-flex h-11 flex-1 items-center justify-center rounded-xl bg-pine text-sm font-medium text-sheet disabled:opacity-60"
+                >
+                  Salvar perfil
+                </button>
+              </div>
+            </form>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
       {toast && (
         <p
           role="status"
@@ -959,6 +1223,7 @@ function ProcessoCard({
         <h2 className="mt-2 text-base font-semibold text-ink">{processo.parte}</h2>
         <p className="text-sm text-muted">{processo.assunto}</p>
         <p className="mt-1 text-xs tracking-wide text-muted">{processo.numero}</p>
+        <p className="mt-1 text-xs text-muted">Lançado por {processo.autorNome || "sem nome"}</p>
 
         <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
           <div>
@@ -979,12 +1244,12 @@ function ProcessoCard({
 
         {ultimo && (
           <p className="mt-3 text-sm leading-relaxed text-ink">
-            <span className="text-muted">Último andamento · </span>
+            <span className="text-muted">Último · {ultimo.autorNome || "sem nome"} · </span>
             {ultimo.texto}
           </p>
         )}
 
-        {processo.historico.length > 1 && (
+        {processo.historico.length > 0 && (
           <button
             type="button"
             onClick={() => setAberto((v) => !v)}
@@ -1004,6 +1269,8 @@ function ProcessoCard({
                     hour: "2-digit",
                     minute: "2-digit",
                   }).format(new Date(item.em))}
+                  {" · "}
+                  {item.autorNome || "sem nome"}
                 </span>
                 <span className="mt-0.5 block text-ink">{item.texto}</span>
               </li>

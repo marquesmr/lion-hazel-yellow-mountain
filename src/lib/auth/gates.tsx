@@ -108,7 +108,7 @@ export function UserButton() {
           className="h-8 w-8 rounded-full object-cover"
         />
       ) : (
-        <span className="grid h-8 w-8 place-items-center rounded-full bg-black/10 text-sm font-medium dark:bg-white/20">
+        <span className="grid h-8 w-8 place-items-center rounded-full bg-pine-soft text-sm font-medium text-pine">
           {label.charAt(0).toUpperCase()}
         </span>
       )}
@@ -124,7 +124,7 @@ export function UserButton() {
           }}
           className="cursor-pointer text-sm underline-offset-4 opacity-70 hover:underline disabled:cursor-wait disabled:no-underline"
         >
-          {signingOut ? "Signing out…" : "Sign out"}
+          {signingOut ? "Saindo…" : "Sair"}
         </button>
       )}
     </div>

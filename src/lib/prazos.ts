@@ -8,6 +8,7 @@ export type Andamento = {
   id: string;
   em: string;
   texto: string;
+  autorNome: string;
 };
 
 export type Processo = {
@@ -22,6 +23,8 @@ export type Processo = {
   status: StatusProcesso;
   historico: Andamento[];
   equipeId: string | null;
+  autorId: string | null;
+  autorNome: string;
 };
 
 const STORAGE_KEY = "prazos.processos.v1";
@@ -131,7 +134,14 @@ const EXEMPLO_TIPO: Record<string, TipoProcesso> = {
 
 function normalizarProcesso(p: Processo): Processo {
   const tipo = (TIPOS as readonly string[]).includes(p.tipo) ? p.tipo : (EXEMPLO_TIPO[p.numero] ?? "Outros");
-  return { ...p, tipo, equipeId: p.equipeId ?? null };
+  return {
+    ...p,
+    tipo,
+    equipeId: p.equipeId ?? null,
+    autorId: p.autorId ?? null,
+    autorNome: p.autorNome ?? "",
+    historico: (p.historico ?? []).map((item) => ({ ...item, autorNome: item.autorNome ?? "" })),
+  };
 }
 
 export function avisoKey(p: Processo, now = new Date()): string {

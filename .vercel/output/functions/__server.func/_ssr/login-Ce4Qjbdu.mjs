@@ -1,7 +1,7 @@
 import { y as Navigate } from "../_libs/@tanstack/react-router+[...].mjs";
 import { n as require_jsx_runtime } from "../_libs/radix-ui__react-context+react.mjs";
-import { r as useCurrentUserState, t as TelaConta } from "./tela-conta-CwtgSTuz.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/login-Ddn_sqa4.js
+import { r as useCurrentUserState, t as TelaConta } from "./tela-conta-C_HLEPub.mjs";
+//#region node_modules/.nitro/vite/services/ssr/assets/login-Ce4Qjbdu.js
 var import_jsx_runtime = require_jsx_runtime();
 function Login() {
 	const { user, isPending } = useCurrentUserState();
