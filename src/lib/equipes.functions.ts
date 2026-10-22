@@ -1,0 +1,209 @@
+import { createServerFn } from "@tanstack/react-start";
+import { getSql } from "@/lib/db";
+import { authMiddleware } from "@/lib/auth/middleware";
+
+export type PapelEquipe = "dono" | "membro";
+
+export type MembroEquipe = {
+  userId: string;
+  nome: string;
+  email: string;
+  papel: PapelEquipe;
+};
+
+export type Equipe = {
+  id: string;
+  nome: string;
+  papel: PapelEquipe;
+  membros: MembroEquipe[];
+  convites: string[];
+};
+
+function emailOk(value: unknown): string {
+  if (typeof value !== "string") throw new Error("E-mail inválido.");
+  const email = value.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 160) {
+    throw new Error("E-mail inválido.");
+  }
+  return email;
+}
+
+function papelOk(value: string): PapelEquipe {
+  return value === "dono" ? "dono" : "membro";
+}
+
+async function aceitarConvites(userId: string) {
+  const sql = await getSql();
+  const eu = await sql<{ email: string }>`select email from "user" where id = ${userId}`;
+  const email = eu[0]?.email?.toLowerCase();
+  if (!email) return;
+  await sql`
+    insert into equipe_membros (equipe_id, user_id, papel)
+    select c.equipe_id, ${userId}, 'membro'
+    from equipe_convites c
+    where lower(c.email) = ${email}
+    on conflict (equipe_id, user_id) do nothing
+  `;
+  await sql`delete from equipe_convites where lower(email) = ${email}`;
+}
+
+export const listarEquipes = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    await aceitarConvites(context.userId);
+    const sql = await getSql();
+    const linhas = await sql<{
+      equipe_id: string;
+      nome: string;
+      meu_papel: string;
+      user_id: string;
+      name: string;
+      email: string;
+      papel: string;
+    }>`
+      select e.id as equipe_id, e.nome, meu.papel as meu_papel,
+             m.user_id, u.name, u.email, m.papel
+      from equipe_membros meu
+      join equipes e on e.id = meu.equipe_id
+      join equipe_membros m on m.equipe_id = e.id
+      join "user" u on u.id = m.user_id
+      where meu.user_id = ${context.userId}
+      order by e.nome, u.name
+    `;
+    const convites = await sql<{ equipe_id: string; email: string }>`
+      select c.equipe_id, c.email
+      from equipe_convites c
+      join equipe_membros meu on meu.equipe_id = c.equipe_id
+      where meu.user_id = ${context.userId} and meu.papel = 'dono'
+      order by c.email
+    `;
+    const mapa = new Map<string, Equipe>();
+    for (const linha of linhas) {
+      let equipe = mapa.get(linha.equipe_id);
+      if (!equipe) {
+        equipe = {
+          id: linha.equipe_id,
+          nome: linha.nome,
+          papel: papelOk(linha.meu_papel),
+          membros: [],
+          convites: [],
+        };
+        mapa.set(linha.equipe_id, equipe);
+      }
+      equipe.membros.push({
+        userId: linha.user_id,
+        nome: linha.name,
+        email: linha.email,
+        papel: papelOk(linha.papel),
+      });
+    }
+    for (const convite of convites) {
+      mapa.get(convite.equipe_id)?.convites.push(convite.email);
+    }
+    return [...mapa.values()];
+  });
+
+export const criarEquipe = createServerFn({ method: "POST" })
+  .validator((nome: unknown) => {
+    if (typeof nome !== "string" || nome.trim().length < 2) throw new Error("Dê um nome para a equipe.");
+    return nome.trim().slice(0, 60);
+  })
+  .middleware([authMiddleware])
+  .handler(async ({ context, data: nome }) => {
+    const sql = await getSql();
+    const id = crypto.randomUUID();
+    await sql`insert into equipes (id, nome, owner_id) values (${id}, ${nome}, ${context.userId})`;
+    await sql`
+      insert into equipe_membros (equipe_id, user_id, papel)
+      values (${id}, ${context.userId}, 'dono')
+    `;
+    return { id, nome };
+  });
+
+export const adicionarNaEquipe = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    if (!input || typeof input !== "object") throw new Error("Dados inválidos");
+    const bruto = input as { equipeId?: unknown; email?: unknown };
+    if (typeof bruto.equipeId !== "string" || !bruto.equipeId.trim()) throw new Error("Dados inválidos");
+    return { equipeId: bruto.equipeId.trim().slice(0, 80), email: emailOk(bruto.email) };
+  })
+  .middleware([authMiddleware])
+  .handler(async ({ context, data }) => {
+    const sql = await getSql();
+    const dono = await sql<{ ok: number }>`
+      select 1 as ok from equipe_membros
+      where equipe_id = ${data.equipeId} and user_id = ${context.userId} and papel = 'dono'
+    `;
+    if (!dono.length) throw new Error("Só quem criou a equipe pode adicionar pessoas.");
+    const total = await sql<{ n: number }>`
+      select (
+        (select count(*) from equipe_membros where equipe_id = ${data.equipeId})
+        + (select count(*) from equipe_convites where equipe_id = ${data.equipeId})
+      ) as n
+    `;
+    if (Number(total[0]?.n ?? 0) >= 30) throw new Error("Esta equipe já está cheia.");
+    const eu = await sql<{ email: string }>`select email from "user" where id = ${context.userId}`;
+    if (eu[0]?.email?.toLowerCase() === data.email) throw new Error("Você já faz parte desta equipe.");
+    const alvo = await sql<{ id: string; name: string }>`
+      select id, name from "user" where lower(email) = ${data.email}
+    `;
+    if (alvo.length) {
+      await sql`
+        insert into equipe_membros (equipe_id, user_id, papel)
+        values (${data.equipeId}, ${alvo[0].id}, 'membro')
+        on conflict (equipe_id, user_id) do nothing
+      `;
+      await sql`
+        delete from equipe_convites
+        where equipe_id = ${data.equipeId} and lower(email) = ${data.email}
+      `;
+      return { entrou: true, nome: alvo[0].name };
+    }
+    await sql`
+      insert into equipe_convites (equipe_id, email)
+      values (${data.equipeId}, ${data.email})
+      on conflict (equipe_id, email) do nothing
+    `;
+    return { entrou: false, nome: null };
+  });
+
+export const removerDaEquipe = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    if (!input || typeof input !== "object") throw new Error("Dados inválidos");
+    const bruto = input as { equipeId?: unknown; email?: unknown };
+    if (typeof bruto.equipeId !== "string" || !bruto.equipeId.trim()) throw new Error("Dados inválidos");
+    return { equipeId: bruto.equipeId.trim().slice(0, 80), email: emailOk(bruto.email) };
+  })
+  .middleware([authMiddleware])
+  .handler(async ({ context, data }) => {
+    const sql = await getSql();
+    const eu = await sql<{ email: string; papel: string }>`
+      select u.email, m.papel
+      from equipe_membros m
+      join "user" u on u.id = m.user_id
+      where m.equipe_id = ${data.equipeId} and m.user_id = ${context.userId}
+    `;
+    if (!eu.length) throw new Error("Você não faz parte desta equipe.");
+    const meuEmail = eu[0].email.toLowerCase();
+    const souDono = eu[0].papel === "dono";
+    if (meuEmail === data.email) {
+      if (souDono) throw new Error("Quem criou a equipe não pode sair.");
+      await sql`
+        delete from equipe_membros
+        where equipe_id = ${data.equipeId} and user_id = ${context.userId}
+      `;
+      return { ok: true };
+    }
+    if (!souDono) throw new Error("Só quem criou a equipe pode remover pessoas.");
+    await sql`
+      delete from equipe_membros
+      where equipe_id = ${data.equipeId}
+        and user_id in (select id from "user" where lower(email) = ${data.email})
+        and papel <> 'dono'
+    `;
+    await sql`
+      delete from equipe_convites
+      where equipe_id = ${data.equipeId} and lower(email) = ${data.email}
+    `;
+    return { ok: true };
+  });
