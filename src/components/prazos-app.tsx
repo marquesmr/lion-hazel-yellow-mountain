@@ -257,7 +257,7 @@ export function PrazosApp() {
   useEffect(() => {
     if (!ready) return;
     const n = atencao.length;
-    document.title = n > 0 ? `(${n}) Prazos — atenção` : "Prazos — lançamento de processos";
+    document.title = n > 0 ? `(${n}) Controle de Prazos` : "Controle de Prazos";
   }, [atencao.length, ready]);
 
   useEffect(() => {
@@ -739,7 +739,9 @@ export function PrazosApp() {
                         <li key={p.id} className="flex items-start gap-3 text-sm">
                           <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${TOM[u].bar}`} />
                           <span className="min-w-0">
-                            <span className="font-medium text-ink">{p.parte}</span>
+                            <span className="font-medium text-ink">{p.numero}</span>
+                            <span className="text-pine"> · {p.tipo}</span>
+                            <span className="block text-ink">{p.parte}</span>
                             <span className="text-muted"> · {p.assunto}</span>
                             <span className="block text-muted">
                               {prazoLabel(p)} · {formatDate(p.prazo)}
@@ -1218,11 +1220,11 @@ function ProcessoCard({
       <div className="px-4 py-4 pl-5">
         <div className="flex flex-wrap items-center gap-2">
           <span className={`rounded-full px-2 py-1 text-xs font-medium ${tom.badge}`}>{prazoLabel(processo)}</span>
-          <span className="text-xs text-muted">{processo.tipo}</span>
         </div>
+        <p className="mt-3 font-display text-2xl leading-none tracking-tight text-ink">{processo.numero}</p>
+        <p className="mt-1 text-sm font-semibold text-pine">{processo.tipo}</p>
         <h2 className="mt-2 text-base font-semibold text-ink">{processo.parte}</h2>
         <p className="text-sm text-muted">{processo.assunto}</p>
-        <p className="mt-1 text-xs tracking-wide text-muted">{processo.numero}</p>
         <p className="mt-1 text-xs text-muted">Lançado por {processo.autorNome || "sem nome"}</p>
 
         <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
@@ -1423,9 +1425,18 @@ function PainelEquipe({
           <ul className="flex flex-col gap-1">
             {selecionada.membros.map((membro) => (
               <li key={membro.userId} className="flex items-center justify-between gap-2 text-sm">
-                <span className="min-w-0 truncate text-ink">
-                  {membro.nome}
-                  <span className="text-muted"> · {membro.papel === "dono" ? "criou" : "membro"}</span>
+                <span className="flex min-w-0 items-center gap-2 text-ink">
+                  {membro.foto ? (
+                    <img src={membro.foto} alt="" className="size-8 shrink-0 rounded-full object-cover" />
+                  ) : (
+                    <span className="grid size-8 shrink-0 place-items-center rounded-full bg-pine-soft text-xs font-medium text-pine">
+                      {(membro.nome || "?").charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                  <span className="min-w-0 truncate">
+                    {membro.nome}
+                    <span className="text-muted"> · {membro.papel === "dono" ? "criou" : "membro"}</span>
+                  </span>
                 </span>
                 {selecionada.papel === "dono" && membro.papel !== "dono" && (
                   <button type="button" onClick={() => void onRemover(membro.email)} className="inline-flex h-11 items-center text-sm font-medium text-seal">
