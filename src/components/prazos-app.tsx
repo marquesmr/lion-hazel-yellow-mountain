@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   Bell,
@@ -18,6 +18,10 @@ import {
   type Andamento,
   type Processo,
   type TipoProcesso,
+  TIPOS_LEI,
+  type AlcanceVeto,
+  type RetornoLegislativo,
+  type TipoLei,
   addDaysIso,
   avisoKey,
   avisosJaEnviados,
@@ -35,10 +39,12 @@ import {
 import { UserButton } from "@/lib/auth/gates";
 import { authClient } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
-import { apagarProcesso, listarProcessos, salvarProcesso } from "@/lib/processos.functions";
+import { apagarProcesso, listarProcessos, moverProcesso, salvarProcesso } from "@/lib/processos.functions";
+import { SoltarProcessoContext } from "@/components/soltar-processo";
 import { adicionarNaEquipe, criarEquipe, listarEquipes, removerDaEquipe, type Equipe } from "@/lib/equipes.functions";
 import { TelaConta } from "@/components/tela-conta";
 import { PainelEstatisticas } from "@/components/estatisticas";
+import { AdminPainel } from "@/components/admin-painel";
 
 type Filtro = "abertos" | "atencao" | "vencidos" | "prazo" | "concluidos" | "todos";
 
@@ -74,6 +80,7 @@ const ABAS_TIPO: { id: TipoProcesso | "todos"; label: string }[] = [
 
 type OrdemCampo = "numero" | "tipo" | "prazo";
 type Guia = "lista" | "estatisticas";
+type Area = "legislativo" | "administrativo";
 
 function evento(texto: string, autorNome: string): Andamento {
   return { id: crypto.randomUUID(), em: new Date().toISOString(), texto, autorNome };
@@ -108,36 +115,16 @@ function classificar(lista: Processo[], campo: OrdemCampo, dir: "asc" | "desc"):
   });
 }
 
-function reduzirFoto(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (!file.type.startsWith("image/") || file.size > 8_000_000) {
-      reject(new Error("foto"));
-      return;
-    }
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      const max = 256;
-      const escala = Math.min(1, max / Math.max(img.width, img.height));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(img.width * escala));
-      canvas.height = Math.max(1, Math.round(img.height * escala));
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        URL.revokeObjectURL(url);
-        reject(new Error("foto"));
-        return;
-      }
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-      resolve(canvas.toDataURL("image/jpeg", 0.82));
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("foto"));
-    };
-    img.src = url;
-  });
+function useGradeTresColunas() {
+  const [tres, setTres] = useState(true);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    const aplicar = () => setTres(mq.matches);
+    aplicar();
+    mq.addEventListener("change", aplicar);
+    return () => mq.removeEventListener("change", aplicar);
+  }, []);
+  return tres;
 }
 
 function emptyForm(): FormState {
@@ -174,6 +161,18 @@ const TOM: Record<Urgencia, { badge: string; bar: string; label: string }> = {
   concluido: { badge: "bg-line text-muted", bar: "bg-line", label: "Concluído" },
 };
 
+function PranchetaGrafico({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="6" y="3.5" width="12" height="17" rx="2" />
+      <path d="M9 3.5h6v2.2a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1z" />
+      <path d="M9 17.5V14" />
+      <path d="M12 17.5v-6" />
+      <path d="M15 17.5v-3.5" />
+    </svg>
+  );
+}
+
 export function PrazosApp() {
   const { user, isPending } = useCurrentUserState();
   const [ready, setReady] = useState(false);
@@ -188,6 +187,12 @@ export function PrazosApp() {
   const [andamentoId, setAndamentoId] = useState<string | null>(null);
   const [notaAndamento, setNotaAndamento] = useState("");
   const [novoPrazo, setNovoPrazo] = useState("");
+  const [retorno, setRetorno] = useState<"" | RetornoLegislativo>("");
+  const [vetoAlcance, setVetoAlcance] = useState<"" | AlcanceVeto>("");
+  const [leiTipo, setLeiTipo] = useState<"" | TipoLei>("");
+  const [leiNumero, setLeiNumero] = useState("");
+  const [leiAno, setLeiAno] = useState(new Date().getFullYear());
+  const [apreciacao, setApreciacao] = useState("");
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [perm, setPerm] = useState<NotificationPermission | "unsupported">("unsupported");
   const [toast, setToast] = useState("");
@@ -199,8 +204,10 @@ export function PrazosApp() {
   const [guia, setGuia] = useState<Guia>("lista");
   const [perfilOpen, setPerfilOpen] = useState(false);
   const [nomePerfil, setNomePerfil] = useState("");
-  const [fotoPerfil, setFotoPerfil] = useState<string | null>(null);
   const [salvandoPerfil, setSalvandoPerfil] = useState(false);
+  const [parte, setParte] = useState(0);
+  const [area, setArea] = useState<Area>("legislativo");
+  const tresColunas = useGradeTresColunas();
   const meuNome = user?.displayName?.trim() || "Sem nome";
 
   useEffect(() => {
@@ -330,6 +337,15 @@ export function PrazosApp() {
     return classificar(lista, ordemCampo, ordemDir);
   }, [processos, filtro, busca, tipoAba, ordemCampo, ordemDir]);
 
+  const porParte = (tresColunas ? 3 : 1) * 5;
+  const totalPartes = Math.max(1, Math.ceil(filtrados.length / porParte));
+  const parteAtual = Math.min(parte, totalPartes - 1);
+  const daParte = filtrados.slice(parteAtual * porParte, parteAtual * porParte + porParte);
+
+  useEffect(() => {
+    setParte(0);
+  }, [filtro, busca, tipoAba, ordemCampo, ordemDir, equipeAtual, tresColunas]);
+
   const contagem = useMemo(() => {
     let vencidos = 0;
     let hoje = 0;
@@ -432,6 +448,12 @@ export function PrazosApp() {
       equipeId: equipeAtual,
       autorId: user?.id ?? null,
       autorNome: meuNome,
+      retorno: null,
+      vetoAlcance: null,
+      leiTipo: null,
+      leiNumero: null,
+      leiAno: null,
+      apreciacaoPrazo: null,
     };
     const ok = await persistir([criado, ...processos], criado, null, "Processo lançado");
     if (ok) setFormOpen(false);
@@ -440,13 +462,42 @@ export function PrazosApp() {
   async function registrarAndamento() {
     if (!andamentoId) return;
     const texto = notaAndamento.trim();
-    if (!texto) return;
     const atual = processos.find((p) => p.id === andamentoId);
     if (!atual) return;
+    if (!texto && !retorno) return;
+    const numero = Number(leiNumero);
+    if (retorno === "veto") {
+      if (vetoAlcance !== "integral" && vetoAlcance !== "parcial") {
+        setToast("Informe se o veto é integral ou parcial.");
+        return;
+      }
+      if (!Number.isInteger(numero) || numero < 1 || !apreciacao) {
+        setToast("Informe o número, o ano e o prazo de apreciação do veto.");
+        return;
+      }
+    }
+    if (retorno === "sancionada") {
+      if (!leiTipo || !Number.isInteger(numero) || numero < 1) {
+        setToast("Informe o tipo, o número e o ano da lei.");
+        return;
+      }
+    }
+    const peca = retorno ? `${String(numero).padStart(2, "0")}/${leiAno}` : "";
+    const resumo = !retorno
+      ? texto
+      : retorno === "sancionada"
+        ? `Retornou como sancionada · ${leiTipo} ${peca}${texto ? `. ${texto}` : ""}`
+        : `Retornou como veto ${vetoAlcance} · ${peca}. Apreciação até ${formatDate(apreciacao)}${texto ? `. ${texto}` : ""}`;
     const atualizado: Processo = {
       ...atual,
-      prazo: novoPrazo || atual.prazo,
-      historico: [...atual.historico, evento(texto, meuNome)],
+      prazo: retorno === "veto" ? apreciacao : novoPrazo || atual.prazo,
+      retorno: retorno || null,
+      vetoAlcance: retorno === "veto" ? (vetoAlcance as AlcanceVeto) : null,
+      leiTipo: retorno === "sancionada" ? (leiTipo as TipoLei) : null,
+      leiNumero: retorno ? numero : null,
+      leiAno: retorno ? leiAno : null,
+      apreciacaoPrazo: retorno === "veto" ? apreciacao : null,
+      historico: [...atual.historico, evento(resumo, meuNome)],
     };
     const ok = await persistir(
       processos.map((p) => (p.id === atualizado.id ? atualizado : p)),
@@ -512,6 +563,21 @@ export function PrazosApp() {
 
   const equipeSelecionada = equipes.find((equipe) => equipe.id === equipeAtual) ?? null;
 
+  const moverLegislativo = useCallback(
+    async (id: string, equipeId: string | null) => {
+      const atual = processos.find((item) => item.id === id);
+      if (!atual || (atual.equipeId ?? null) === equipeId) return;
+      try {
+        await moverProcesso({ data: { id, equipeId } });
+        setProcessos(await listarProcessos({ data: equipeAtual }));
+        setToast(equipeId ? "Processo movido para a equipe." : "Processo movido para os seus.");
+      } catch (err) {
+        setToast(err instanceof Error ? err.message : "Não foi possível mover.");
+      }
+    },
+    [equipeAtual, processos],
+  );
+
   async function criarNovaEquipe(nome: string) {
     try {
       const criada = await criarEquipe({ data: nome });
@@ -558,7 +624,7 @@ export function PrazosApp() {
     }
     setSalvandoPerfil(true);
     try {
-      const resposta = await authClient.updateUser({ name: nome, image: fotoPerfil });
+      const resposta = await authClient.updateUser({ name: nome });
       if (resposta.error) {
         setToast("Não foi possível atualizar o perfil.");
         return;
@@ -608,27 +674,21 @@ export function PrazosApp() {
 
   return (
     <div className="mx-auto min-h-screen max-w-6xl px-4 py-6 md:px-8 md:py-8">
-      <header className="flex flex-col gap-4 border-b border-line pb-6 md:flex-row md:items-end md:justify-between">
-        <div className="flex items-center gap-3">
-          <img src="/favicon.svg" alt="" className="size-11 shrink-0 rounded-xl" />
-          <div>
-            <p className="text-sm font-medium tracking-wide text-pine">Controle de prazos</p>
-            <h1 className="font-display text-4xl leading-none text-ink">Prazos</h1>
-          </div>
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+      <header className="flex flex-col gap-4 border-b border-line pb-6 md:flex-row md:items-center md:justify-between">
+        <h1 className="font-display text-2xl leading-tight text-ink sm:text-3xl">Assistente do Poder Legislativo</h1>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
           <UserButton />
           <button
             type="button"
             onClick={() => {
               setNomePerfil(user.displayName ?? "");
-              setFotoPerfil(user.profileImageUrl);
               setPerfilOpen(true);
             }}
             className="inline-flex h-11 items-center justify-center rounded-xl border border-line bg-sheet px-4 text-sm font-medium text-ink"
           >
             Perfil
           </button>
+          {area !== "administrativo" && (
           <button
             type="button"
             onClick={abrirNovo}
@@ -637,10 +697,54 @@ export function PrazosApp() {
             <Plus className="size-4" />
             Novo processo
           </button>
+          )}
         </div>
       </header>
 
-      <div className="mt-6 grid gap-6 md:grid-cols-[16rem_1fr]">
+      <div className="mt-6 grid grid-cols-1 gap-2 sm:grid-cols-2" role="tablist" aria-label="Área">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={area === "legislativo"}
+          onClick={() => setArea("legislativo")}
+          className={
+            "inline-flex min-h-12 items-center justify-center rounded-xl px-4 py-2 text-sm font-medium " +
+            (area === "legislativo" ? "bg-pine text-sheet" : "border border-line bg-sheet text-ink")
+          }
+        >
+          Processos Legislativos
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={area === "administrativo"}
+          onClick={() => setArea("administrativo")}
+          className={
+            "inline-flex min-h-12 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium " +
+            (area === "administrativo" ? "bg-pine text-sheet" : "border border-line bg-sheet text-ink")
+          }
+        >
+          <PranchetaGrafico className="size-5 shrink-0" />
+          Controle e Estatística de Processos Administrativo
+        </button>
+      </div>
+
+      {area === "administrativo" ? (
+        <AdminPainel equipeAtual={equipeAtual} equipes={equipes} meuNome={meuNome} sinalNovo={0} onToast={setToast}>
+          <PainelEquipe
+            equipes={equipes}
+            atual={equipeAtual}
+            meuEmail={user.primaryEmail ?? ""}
+            onEscolher={setEquipeAtual}
+            onCriar={criarNovaEquipe}
+            onAdicionar={incluirNaEquipe}
+            onRemover={tirarDaEquipe}
+          />
+          <CaixaAvisos perm={perm} onAtivar={ativarAvisos} />
+        </AdminPainel>
+      ) : (
+      <SoltarProcessoContext.Provider value={moverLegislativo}>
+      <div className="mt-4 grid gap-6 md:grid-cols-[16rem_1fr]">
         <aside className="flex flex-col gap-4 md:sticky md:top-6 md:self-start">
           <div className="grid grid-cols-2 gap-2">
             <Resumo valor={contagem.vencidos} rotulo="Vencidos" tom="seal" />
@@ -664,29 +768,7 @@ export function PrazosApp() {
               <Bell className="size-4 text-pine" />
               Avisos
             </div>
-            <p className="mt-2 text-sm leading-relaxed text-muted">
-              Os prazos vencidos e os que entram na antecedência escolhida ficam destacados no topo.
-              Com a página aberta, o navegador também notifica — uma vez por dia para cada prazo.
-            </p>
-            {perm === "granted" ? (
-              <p className="mt-3 text-sm font-medium text-pine">Avisos do navegador ativos.</p>
-            ) : perm === "denied" ? (
-              <p className="mt-3 flex items-start gap-2 text-sm text-brass">
-                <BellOff className="mt-0.5 size-4 shrink-0" />
-                Bloqueados neste navegador. Os alertas continuam nesta tela.
-              </p>
-            ) : perm === "default" ? (
-              <button
-                type="button"
-                onClick={ativarAvisos}
-                className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-line bg-paper text-sm font-medium text-ink"
-              >
-                <Bell className="size-4" />
-                Ativar avisos
-              </button>
-            ) : (
-              <p className="mt-3 text-sm text-muted">Este navegador não mostra notificações do sistema.</p>
-            )}
+            <TextoAvisos perm={perm} onAtivar={ativarAvisos} />
           </div>
         </aside>
 
@@ -842,16 +924,24 @@ export function PrazosApp() {
               )}
             </div>
           ) : (
-            <ul className="mt-4 flex flex-col gap-3">
-              {filtrados.map((p) => (
+            <ul className={"mt-4 grid gap-3 " + (tresColunas ? "grid-cols-3" : "grid-cols-1")}>
+              {daParte.map((p) => (
                 <ProcessoCard
                   key={p.id}
                   processo={p}
+                  equipes={equipes}
+                  onMover={moverLegislativo}
                   onEditar={() => abrirEdicao(p)}
                   onAndamento={() => {
                     setAndamentoId(p.id);
                     setNotaAndamento("");
                     setNovoPrazo("");
+                    setRetorno(p.retorno ?? "");
+                    setVetoAlcance(p.vetoAlcance ?? "");
+                    setLeiTipo(p.leiTipo ?? "");
+                    setLeiNumero(p.leiNumero != null ? String(p.leiNumero) : "");
+                    setLeiAno(p.leiAno ?? new Date().getFullYear());
+                    setApreciacao(p.apreciacaoPrazo ?? "");
                   }}
                   onConcluir={() => concluir(p.id)}
                   onReabrir={() => reabrir(p.id)}
@@ -860,10 +950,36 @@ export function PrazosApp() {
               ))}
             </ul>
           )}
+          {filtrados.length > porParte && (
+            <nav className="mt-4 flex flex-col items-center gap-3" aria-label="Páginas da lista">
+              <p className="text-sm text-muted">
+                {parteAtual + 1} de {totalPartes}
+                <span className="text-muted"> · {filtrados.length} processos</span>
+              </p>
+              <div className="flex max-w-full gap-2 overflow-x-auto pb-1">
+                {Array.from({ length: totalPartes }, (_, indice) => (
+                  <button
+                    key={indice}
+                    type="button"
+                    onClick={() => setParte(indice)}
+                    aria-current={indice === parteAtual ? "page" : undefined}
+                    className={
+                      "grid size-10 shrink-0 place-items-center rounded-full text-sm font-medium " +
+                      (indice === parteAtual ? "bg-ink text-sheet" : "border border-line bg-sheet text-ink")
+                    }
+                  >
+                    {indice + 1}
+                  </button>
+                ))}
+              </div>
+            </nav>
+          )}
             </>
           )}
         </section>
       </div>
+      </SoltarProcessoContext.Provider>
+      )}
 
       <Dialog.Root open={formOpen} onOpenChange={setFormOpen}>
         <Dialog.Portal>
@@ -1016,8 +1132,7 @@ export function PrazosApp() {
                   value={notaAndamento}
                   onChange={(e) => setNotaAndamento(e.target.value)}
                   className={`${inputCls} min-h-24 py-2`}
-                  required
-                  placeholder="Ex.: contestação protocolada"
+                  placeholder="O que aconteceu"
                 />
               </Campo>
               <Campo label="Novo prazo (opcional)">
@@ -1028,6 +1143,47 @@ export function PrazosApp() {
                   className={inputCls}
                 />
               </Campo>
+              <Campo label="Retornou como">
+                <select value={retorno} onChange={(e) => setRetorno(e.target.value as "" | RetornoLegislativo)} className={inputCls}>
+                  <option value="">Ainda não</option>
+                  <option value="veto">Veto</option>
+                  <option value="sancionada">Sancionada</option>
+                </select>
+              </Campo>
+              {retorno === "veto" && (
+                <Campo label="Veto">
+                  <select value={vetoAlcance} onChange={(e) => setVetoAlcance(e.target.value as "" | AlcanceVeto)} className={inputCls}>
+                    <option value="">Integral ou parcial</option>
+                    <option value="integral">Integral</option>
+                    <option value="parcial">Parcial</option>
+                  </select>
+                </Campo>
+              )}
+              {retorno === "sancionada" && (
+                <Campo label="Tipo de lei">
+                  <select value={leiTipo} onChange={(e) => setLeiTipo(e.target.value as "" | TipoLei)} className={inputCls}>
+                    <option value="">Escolha</option>
+                    {TIPOS_LEI.map((tipo) => (
+                      <option key={tipo} value={tipo}>{tipo}</option>
+                    ))}
+                  </select>
+                </Campo>
+              )}
+              {retorno && (
+                <div className="grid grid-cols-2 gap-3">
+                  <Campo label="Número">
+                    <input value={leiNumero} onChange={(e) => setLeiNumero(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" className={inputCls} />
+                  </Campo>
+                  <Campo label="Ano">
+                    <input value={leiAno} onChange={(e) => setLeiAno(Number(e.target.value))} inputMode="numeric" className={inputCls} />
+                  </Campo>
+                </div>
+              )}
+              {retorno === "veto" && (
+                <Campo label="Prazo de apreciação">
+                  <input type="date" value={apreciacao} onChange={(e) => setApreciacao(e.target.value)} className={inputCls} />
+                </Campo>
+              )}
               <div className="flex gap-2 pt-1">
                 <Dialog.Close
                   type="button"
@@ -1089,38 +1245,6 @@ export function PrazosApp() {
                 void salvarPerfil();
               }}
             >
-              <div className="flex items-center gap-3">
-                {fotoPerfil ? (
-                  <img src={fotoPerfil} alt="" className="size-16 rounded-full object-cover" />
-                ) : (
-                  <span className="grid size-16 place-items-center rounded-full bg-pine-soft text-xl font-medium text-pine">
-                    {(nomePerfil || "P").charAt(0).toUpperCase()}
-                  </span>
-                )}
-                <div className="flex flex-col gap-2">
-                  <label className="inline-flex h-11 cursor-pointer items-center rounded-xl border border-line px-3 text-sm font-medium text-ink">
-                    Escolher foto
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      className="sr-only"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        event.target.value = "";
-                        if (!file) return;
-                        void reduzirFoto(file)
-                          .then(setFotoPerfil)
-                          .catch(() => setToast("Não foi possível usar esta foto."));
-                      }}
-                    />
-                  </label>
-                  {fotoPerfil && (
-                    <button type="button" onClick={() => setFotoPerfil(null)} className="inline-flex h-11 items-center text-sm text-seal">
-                      Remover foto
-                    </button>
-                  )}
-                </div>
-              </div>
               <Campo label="Nome">
                 <input
                   value={nomePerfil}
@@ -1166,6 +1290,60 @@ export function PrazosApp() {
 const inputCls =
   "h-11 w-full rounded-xl border border-line bg-paper px-3 text-sm text-ink placeholder:text-muted";
 
+function CaixaAvisos({
+  perm,
+  onAtivar,
+}: {
+  perm: NotificationPermission | "unsupported";
+  onAtivar: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-line bg-sheet p-4">
+      <div className="flex items-center gap-2 text-sm font-medium text-ink">
+        <Bell className="size-4 text-pine" />
+        Avisos
+      </div>
+      <TextoAvisos perm={perm} onAtivar={onAtivar} />
+    </div>
+  );
+}
+
+function TextoAvisos({
+  perm,
+  onAtivar,
+}: {
+  perm: NotificationPermission | "unsupported";
+  onAtivar: () => void;
+}) {
+  return (
+    <>
+      <p className="mt-2 text-sm leading-relaxed text-muted">
+        Os prazos vencidos e os que entram na antecedência escolhida ficam destacados no topo. Com a página aberta, o
+        navegador também notifica — uma vez por dia para cada prazo.
+      </p>
+      {perm === "granted" ? (
+        <p className="mt-3 text-sm font-medium text-pine">Avisos do navegador ativos.</p>
+      ) : perm === "denied" ? (
+        <p className="mt-3 flex items-start gap-2 text-sm text-brass">
+          <BellOff className="mt-0.5 size-4 shrink-0" />
+          Bloqueados neste navegador. Os alertas continuam nesta tela.
+        </p>
+      ) : perm === "default" ? (
+        <button
+          type="button"
+          onClick={onAtivar}
+          className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-line bg-paper text-sm font-medium text-ink"
+        >
+          <Bell className="size-4" />
+          Ativar avisos
+        </button>
+      ) : (
+        <p className="mt-3 text-sm text-muted">Este navegador não mostra notificações do sistema.</p>
+      )}
+    </>
+  );
+}
+
 function Campo({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="flex flex-col gap-1 text-sm font-medium text-ink">
@@ -1195,6 +1373,8 @@ function Resumo({
 
 function ProcessoCard({
   processo,
+  equipes,
+  onMover,
   onEditar,
   onAndamento,
   onConcluir,
@@ -1202,6 +1382,8 @@ function ProcessoCard({
   onExcluir,
 }: {
   processo: Processo;
+  equipes: { id: string; nome: string }[];
+  onMover: (id: string, equipeId: string | null) => void;
   onEditar: () => void;
   onAndamento: () => void;
   onConcluir: () => void;
@@ -1209,15 +1391,23 @@ function ProcessoCard({
   onExcluir: () => void;
 }) {
   const [aberto, setAberto] = useState(false);
+  const [moverAberto, setMoverAberto] = useState(false);
   const u = urgencia(processo);
   const tom = TOM[u];
   const ultimo = processo.historico[processo.historico.length - 1];
   const dias = daysUntil(processo.prazo);
 
   return (
-    <li className="relative overflow-hidden rounded-2xl border border-line bg-sheet">
+    <li
+      draggable
+      onDragStart={(evento) => {
+        evento.dataTransfer.setData("text/plain", processo.id);
+        evento.dataTransfer.effectAllowed = "move";
+      }}
+      className="relative flex h-full cursor-grab flex-col overflow-hidden rounded-2xl border border-line bg-sheet active:cursor-grabbing"
+    >
       <span className={`absolute inset-y-0 left-0 w-1.5 ${tom.bar}`} aria-hidden />
-      <div className="px-4 py-4 pl-5">
+      <div className="flex flex-1 flex-col px-4 py-4 pl-5">
         <div className="flex flex-wrap items-center gap-2">
           <span className={`rounded-full px-2 py-1 text-xs font-medium ${tom.badge}`}>{prazoLabel(processo)}</span>
         </div>
@@ -1225,6 +1415,14 @@ function ProcessoCard({
         <p className="mt-1 text-sm font-semibold text-pine">{processo.tipo}</p>
         <h2 className="mt-2 text-base font-semibold text-ink">{processo.parte}</h2>
         <p className="text-sm text-muted">{processo.assunto}</p>
+        {processo.retorno && (
+          <p className="mt-2 text-sm font-medium text-ink">
+            {processo.retorno === "sancionada"
+              ? `Sancionada · ${processo.leiTipo ?? "Lei"} ${String(processo.leiNumero ?? "").padStart(2, "0")}/${processo.leiAno ?? ""}`
+              : `Veto ${processo.vetoAlcance ?? ""} · ${String(processo.leiNumero ?? "").padStart(2, "0")}/${processo.leiAno ?? ""}`}
+            {processo.retorno === "veto" && processo.apreciacaoPrazo ? ` · apreciação ${formatDate(processo.apreciacaoPrazo)}` : ""}
+          </p>
+        )}
         <p className="mt-1 text-xs text-muted">Lançado por {processo.autorNome || "sem nome"}</p>
 
         <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
@@ -1280,16 +1478,14 @@ function ProcessoCard({
           </ol>
         )}
 
-        <div className="mt-4 flex flex-wrap gap-2">
-          {processo.status === "andamento" && (
-            <button
-              type="button"
-              onClick={onAndamento}
-              className="inline-flex h-10 items-center gap-1 rounded-lg bg-pine-soft px-3 text-sm font-medium text-pine"
-            >
-              Andamento
-            </button>
-          )}
+        <div className="mt-auto flex flex-wrap gap-2 pt-4">
+          <button
+            type="button"
+            onClick={onAndamento}
+            className="inline-flex h-10 items-center gap-1 rounded-lg bg-pine-soft px-3 text-sm font-medium text-pine"
+          >
+            Andamento
+          </button>
           {processo.status === "andamento" ? (
             <button
               type="button"
@@ -1311,6 +1507,13 @@ function ProcessoCard({
           )}
           <button
             type="button"
+            onClick={() => setMoverAberto((v) => !v)}
+            className="inline-flex h-10 items-center rounded-lg border border-line px-3 text-sm font-medium text-ink"
+          >
+            Mover
+          </button>
+          <button
+            type="button"
             onClick={onEditar}
             className="inline-flex h-10 items-center gap-1 rounded-lg border border-line px-3 text-sm font-medium text-ink"
             aria-label={`Editar ${processo.numero}`}
@@ -1328,6 +1531,24 @@ function ProcessoCard({
             Excluir
           </button>
         </div>
+        {moverAberto && (
+          <div className="mt-2 flex flex-col gap-1 rounded-xl border border-line bg-paper p-2">
+            <p className="px-2 text-xs text-muted">Ou arraste o card até a equipe.</p>
+            {processo.equipeId && (
+              <button type="button" onClick={() => { setMoverAberto(false); onMover(processo.id, null); }} className="h-9 rounded-lg px-2 text-left text-sm font-medium text-ink hover:bg-sheet">
+                Só meus
+              </button>
+            )}
+            {equipes.filter((equipe) => equipe.id !== processo.equipeId).map((equipe) => (
+              <button key={equipe.id} type="button" onClick={() => { setMoverAberto(false); onMover(processo.id, equipe.id); }} className="h-9 rounded-lg px-2 text-left text-sm font-medium text-ink hover:bg-sheet">
+                {equipe.nome}
+              </button>
+            ))}
+            {!processo.equipeId && equipes.length === 0 && (
+              <p className="px-2 text-sm text-muted">Crie uma equipe para mover o processo.</p>
+            )}
+          </div>
+        )}
       </div>
     </li>
   );
@@ -1353,7 +1574,47 @@ function PainelEquipe({
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
   const [ocupado, setOcupado] = useState(false);
+  const [sobre, setSobre] = useState<string | null>(null);
+  const soltar = useContext(SoltarProcessoContext);
   const selecionada = equipes.find((equipe) => equipe.id === atual) ?? null;
+  const soltou = useRef(false);
+
+  function escolher(id: string | null) {
+    if (soltou.current) {
+      soltou.current = false;
+      return;
+    }
+    onEscolher(id);
+  }
+
+  function alvoArraste(chave: string, equipeId: string | null) {
+    return {
+      onDragOver: (evento: DragEvent<HTMLButtonElement>) => {
+        evento.preventDefault();
+        evento.dataTransfer.dropEffect = "move";
+        setSobre(chave);
+      },
+      onDragLeave: () => setSobre((valor) => (valor === chave ? null : valor)),
+      onDrop: (evento: DragEvent<HTMLButtonElement>) => aoSoltar(evento, equipeId),
+    };
+  }
+
+  function aoSoltar(evento: DragEvent<HTMLButtonElement>, equipeId: string | null) {
+    evento.preventDefault();
+    evento.stopPropagation();
+    setSobre(null);
+    soltou.current = true;
+    const id = evento.dataTransfer.getData("text/plain");
+    if (id) soltar?.(id, equipeId);
+  }
+
+  function classeAlvo(chave: string, ativo: boolean) {
+    return (
+      "h-10 rounded-xl px-3 text-left text-sm font-medium " +
+      (sobre === chave ? "ring-2 ring-pine " : "") +
+      (ativo ? "bg-ink text-sheet" : "border border-line text-ink")
+    );
+  }
 
   return (
     <div className="rounded-2xl border border-line bg-sheet p-4">
@@ -1362,16 +1623,14 @@ function PainelEquipe({
         Equipe
       </div>
       <p className="mt-2 text-sm leading-relaxed text-muted">
-        Quem entra na equipe vê os mesmos processos e os prazos que precisam de atenção.
+        Arraste o processo até a equipe, ou use o botão Mover no card. Soltar em Só meus devolve para você.
       </p>
       <div className="mt-3 flex flex-col gap-2">
         <button
           type="button"
-          onClick={() => onEscolher(null)}
-          className={
-            "h-10 rounded-xl px-3 text-left text-sm font-medium " +
-            (atual === null ? "bg-ink text-sheet" : "border border-line text-ink")
-          }
+          onClick={() => escolher(null)}
+          {...alvoArraste("meus", null)}
+          className={classeAlvo("meus", atual === null)}
         >
           Só meus
         </button>
@@ -1379,11 +1638,9 @@ function PainelEquipe({
           <button
             key={equipe.id}
             type="button"
-            onClick={() => onEscolher(equipe.id)}
-            className={
-              "h-10 rounded-xl px-3 text-left text-sm font-medium " +
-              (atual === equipe.id ? "bg-ink text-sheet" : "border border-line text-ink")
-            }
+            onClick={() => escolher(equipe.id)}
+            {...alvoArraste(equipe.id, equipe.id)}
+            className={classeAlvo(equipe.id, atual === equipe.id)}
           >
             {equipe.nome}
           </button>
@@ -1426,13 +1683,9 @@ function PainelEquipe({
             {selecionada.membros.map((membro) => (
               <li key={membro.userId} className="flex items-center justify-between gap-2 text-sm">
                 <span className="flex min-w-0 items-center gap-2 text-ink">
-                  {membro.foto ? (
-                    <img src={membro.foto} alt="" className="size-8 shrink-0 rounded-full object-cover" />
-                  ) : (
-                    <span className="grid size-8 shrink-0 place-items-center rounded-full bg-pine-soft text-xs font-medium text-pine">
-                      {(membro.nome || "?").charAt(0).toUpperCase()}
-                    </span>
-                  )}
+                  <span className="grid size-8 shrink-0 place-items-center rounded-full bg-pine-soft text-xs font-medium text-pine">
+                    {(membro.nome || "?").charAt(0).toUpperCase()}
+                  </span>
                   <span className="min-w-0 truncate">
                     {membro.nome}
                     <span className="text-muted"> · {membro.papel === "dono" ? "criou" : "membro"}</span>

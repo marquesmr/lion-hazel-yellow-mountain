@@ -30,13 +30,14 @@
  * a verified id via `@/lib/auth/middleware`.
  */
 import { betterAuth } from "better-auth";
-import { bearer, genericOAuth } from "better-auth/plugins";
+import { bearer, emailOTP, genericOAuth } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 import { getCookie } from "@tanstack/react-start/server";
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import { ensureDbReady, getPglite } from "../db";
-import { emailAndPasswordEnabled } from "./email-password";
+import { emailAndPassword, emailAndPasswordEnabled } from "./email-password";
+import { enviarCodigoEmail } from "./enviar-codigo.server";
 import { GATE_PROVIDER_ID, gateIdentitySessions } from "./gate-session.server";
 import { GROK_PROVIDERS } from "./providers";
 import { pgliteDialect } from "./pglite-dialect";
@@ -204,14 +205,43 @@ export const auth = betterAuth({
     },
   },
 
+  // Profile photos are not used. A data-URL image was copied into the session
+  // cookie and Cloudflare answered 520 (headers too large). `returned: false`
+  // keeps `image` out of /get-session and the cookie cache. `fieldName` must
+  // stay, because additionalFields replaces the built-in image column.
+  user: {
+    additionalFields: {
+      image: {
+        type: "string",
+        required: false,
+        fieldName: "image",
+        returned: false,
+      },
+    },
+  },
+  databaseHooks: {
+    user: {
+      update: {
+        before: async (data) => {
+          const image = data.image;
+          if (typeof image === "string" && (image.startsWith("data:") || image.length > 500)) {
+            return { data: { ...data, image: null } };
+          }
+          return { data };
+        },
+      },
+    },
+  },
+
   // Cache the session in the short-lived signed `session_data` cookie so reads
   // (incl. the client's `/get-session`) skip the DB — this shrinks the "loading"
   // window and reduces auth flicker. See the `auth` skill for the full
   // flicker-prevention guidance (gate on `isPending`; SSR the session).
-  session: { cookieCache: { enabled: true, maxAge: 300 } },
+  // version "2" drops cookies written when a profile photo was embedded.
+  session: { cookieCache: { enabled: true, maxAge: 300, version: "2" } },
 
   // Local email/password — toggled only via `./email-password` (not a plugin).
-  ...(emailAndPasswordEnabled ? { emailAndPassword: { enabled: true } } : {}),
+  ...(emailAndPasswordEnabled ? { emailAndPassword } : {}),
 
   // `__Host-` prefixed cookies: the browser REFUSES any same-named cookie that
   // carries a `Domain` attribute, so a sibling `*.grok.me` app cannot "toss" a
@@ -233,6 +263,17 @@ export const auth = betterAuth({
 
   plugins: [
     gateIdentitySessions(),
+    emailOTP({
+      otpLength: 6,
+      expiresIn: 60 * 10,
+      allowedAttempts: 5,
+      storeOTP: "hashed",
+      disableSignUp: true,
+      sendVerificationOTP: async ({ email, otp, type }) => {
+        if (type !== "forget-password") return;
+        await enviarCodigoEmail(email, otp);
+      },
+    }),
 
     // One genericOAuth provider per upstream (when auth is on), all federating
     // to the broker with the SAME client and differing only by the `idp` hint.

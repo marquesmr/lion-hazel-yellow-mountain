@@ -9,7 +9,6 @@ export type MembroEquipe = {
   nome: string;
   email: string;
   papel: PapelEquipe;
-  foto: string | null;
 };
 
 export type Equipe = {
@@ -61,10 +60,9 @@ export const listarEquipes = createServerFn({ method: "GET" })
       name: string;
       email: string;
       papel: string;
-      image: string | null;
     }>`
       select e.id as equipe_id, e.nome, meu.papel as meu_papel,
-             m.user_id, u.name, u.email, m.papel, u.image
+             m.user_id, u.name, u.email, m.papel
       from equipe_membros meu
       join equipes e on e.id = meu.equipe_id
       join equipe_membros m on m.equipe_id = e.id
@@ -97,7 +95,6 @@ export const listarEquipes = createServerFn({ method: "GET" })
         nome: linha.name,
         email: linha.email,
         papel: papelOk(linha.papel),
-        foto: linha.image || null,
       });
     }
     for (const convite of convites) {

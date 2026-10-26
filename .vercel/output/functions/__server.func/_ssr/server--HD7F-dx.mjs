@@ -1,7 +1,7 @@
+import { n as getPglite, t as ensureDbReady } from "./db-DIgiGYu6.mjs";
 import { $t as generateId, A as email, Bt as ATTR_CONTEXT, C as serializeSignedCookie, D as any, Dt as JWTExpired, F as optional, G as importJWK, Gt as getAuthTables, H as base64Url, Ht as ATTR_OPERATION_ID, I as record, Jt as runWithAdapter, K as jwtVerify, Kt as getCurrentAdapter, L as string, M as looseObject, N as number, O as array, P as object, Qt as initGetFieldName, S as serializeCookie, U as decodeJwt, Ut as import_src, Vt as ATTR_HOOK_TYPE, W as decodeProtectedHeader, Wt as safeJSONParse, Xt as getBetterAuthVersion, Yt as runWithTransaction, Zt as initGetModelName, _ as runWithRequestState, _n as APIError, a as createAuthorizationURL, b as createRouter$1, bn as BASE_ERROR_CODES, c as createRateLimitKey, cn as logger, d as deprecate, dn as env, en as createRandomStringGenerator, f as createAuthEndpoint, g as hasRequestState, gn as isTest, h as defineRequestState, hn as isProduction, ht as encode, i as refreshAccessToken, k as boolean, l as findInvalidTrustedProxies, ln as shouldPublishLog, m as isAPIError, mn as isDevelopment, n as socialProviders, o as applyDefaultAccessTokenExpiry, on as normalizePathname, p as createAuthMiddleware, qt as queueAfterTransactionHook, r as validateAuthorizationCode, rn as betterFetch, s as isLoopbackHost, sn as createLogger, t as SocialProviderListEnum, u as getIp, v as getCurrentAuthContext, vn as BetterAuthError, w as filterOutputFields, x as toResponse, y as runWithEndpointContext, yn as kAPIErrorHeaderSymbol, zt as createWithSpan } from "../_libs/@better-auth/core+[...].mjs";
 import { a as getOrigin, c as isRequestLike, i as getHost, l as resolveBaseURL, n as PACKAGE_VERSION, o as getProtocol, r as getBaseURL, s as isDynamicBaseURLConfig, t as GENERIC_OAUTH_ERROR_CODES, u as wildcardMatch } from "./url-BE6YaD7r.mjs";
 import { n as defu, t as createDefu } from "../_libs/defu.mjs";
-import { n as getPglite, t as ensureDbReady } from "./db-PBIMHpcn.mjs";
 import { a as PostgresIntrospector, c as sql, i as PostgresAdapter, n as getKyselyDatabaseType, o as PostgresQueryCompiler, s as CompiledQuery, t as createKyselyAdapter } from "../_libs/@better-auth/kysely-adapter+[...].mjs";
 import { i as jwtDecrypt, n as EncryptJWT, r as SignJWT, t as calculateJwkThumbprint } from "../_libs/jose.mjs";
 import { n as hkdf, t as sha256 } from "../_libs/noble__hashes.mjs";
@@ -11,7 +11,7 @@ import { a as utf8ToBytes, i as managedNonce, n as bytesToHex, r as hexToBytes, 
 import { n as string$1, t as boolean$1 } from "../_libs/zod.mjs";
 import { t as Pool } from "../_libs/pg.mjs";
 import { randomBytes } from "node:crypto";
-//#region node_modules/.nitro/vite/services/ssr/assets/server-D8noYjSA.js
+//#region node_modules/.nitro/vite/services/ssr/assets/server--HD7F-dx.js
 function tryDecode$1(str) {
 	if (str.indexOf("%") === -1) return str;
 	try {
@@ -8964,9 +8964,24 @@ var auth = betterAuth({
 			requireLocalEmailVerified: false
 		}
 	},
+	user: { additionalFields: { image: {
+		type: "string",
+		required: false,
+		fieldName: "image",
+		returned: false
+	} } },
+	databaseHooks: { user: { update: { before: async (data) => {
+		const image = data.image;
+		if (typeof image === "string" && (image.startsWith("data:") || image.length > 500)) return { data: {
+			...data,
+			image: null
+		} };
+		return { data };
+	} } } },
 	session: { cookieCache: {
 		enabled: true,
-		maxAge: 300
+		maxAge: 300,
+		version: "2"
 	} },
 	emailAndPassword: { enabled: true },
 	advanced: {

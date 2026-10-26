@@ -8,3 +8,9 @@
  * Do NOT edit `server.ts` for this — that file is frozen pre-wired config.
  */
 export const emailAndPasswordEnabled = true;
+
+export const emailAndPassword = {
+  enabled: true,
+  revokeSessionsOnPasswordReset: true,
+  minPasswordLength: 8,
+} as const;

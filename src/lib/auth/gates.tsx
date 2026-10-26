@@ -101,17 +101,9 @@ export function UserButton() {
   const label = user.displayName ?? user.primaryEmail ?? "Account";
   return (
     <div className="flex items-center gap-2">
-      {user.profileImageUrl ? (
-        <img
-          src={user.profileImageUrl}
-          alt=""
-          className="h-8 w-8 rounded-full object-cover"
-        />
-      ) : (
-        <span className="grid h-8 w-8 place-items-center rounded-full bg-pine-soft text-sm font-medium text-pine">
-          {label.charAt(0).toUpperCase()}
-        </span>
-      )}
+      <span className="grid h-8 w-8 place-items-center rounded-full bg-pine-soft text-sm font-medium text-pine">
+        {label.charAt(0).toUpperCase()}
+      </span>
       <span className="text-sm font-medium">{label}</span>
       {authEnabled && !gateSession && (
         <button

@@ -1,9 +1,9 @@
 import { r as createServerFn } from "./ssr.mjs";
-import { r as getSql } from "./db-PBIMHpcn.mjs";
 import { t as createServerRpc } from "./createServerRpc-CcvdN_gc.mjs";
-import { t as authMiddleware } from "./middleware-CBpQHnaw.mjs";
+import { r as getSql } from "./db-DIgiGYu6.mjs";
+import { t as authMiddleware } from "./middleware-DRaEGDvO.mjs";
 import { t as TIPOS } from "./prazos-3B5T3wUv.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/processos.functions-B9GCnxP5.js
+//#region node_modules/.nitro/vite/services/ssr/assets/processos.functions-LRcLtEB2.js
 function exigirProcesso(input) {
 	if (!input || typeof input !== "object") throw new Error("Dados inválidos");
 	const bruto = input;

@@ -1,4 +1,4 @@
-//#region node_modules/.nitro/vite/services/ssr/assets/_tanstack-start-manifest_v-D3QoFbAm.js
+//#region node_modules/.nitro/vite/services/ssr/assets/_tanstack-start-manifest_v-B3ZTerMg.js
 var tsrStartManifest = () => ({ routes: {
 	__root__: {
 		filePath: "/workspace/src/routes/__root.tsx",
@@ -7,22 +7,22 @@ var tsrStartManifest = () => ({ routes: {
 			"/login",
 			"/api/auth/$"
 		],
-		preloads: ["/assets/index-BNaJ6XA2.js", "/assets/react-DB-4Zxce.js"],
+		preloads: ["/assets/index-Bi22GjKB.js", "/assets/react-DB-4Zxce.js"],
 		scripts: [{ attrs: {
 			type: "module",
 			async: !0,
-			src: "/assets/index-BNaJ6XA2.js"
+			src: "/assets/index-Bi22GjKB.js"
 		} }]
 	},
 	"/": {
 		filePath: "/workspace/src/routes/index.tsx",
 		children: void 0,
-		preloads: ["/assets/routes-DZtBWza6.js", "/assets/tela-conta-DRDAv7rR.js"]
+		preloads: ["/assets/routes-C1pTNNgx.js", "/assets/tela-conta-ChBM7Kh9.js"]
 	},
 	"/login": {
 		filePath: "/workspace/src/routes/login.tsx",
 		children: void 0,
-		preloads: ["/assets/login-Dn6MFKLx.js", "/assets/tela-conta-DRDAv7rR.js"]
+		preloads: ["/assets/login-XjDZiXs6.js", "/assets/tela-conta-ChBM7Kh9.js"]
 	}
 } });
 //#endregion

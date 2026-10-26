@@ -1,9 +1,31 @@
+import { useEffect } from "react";
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth/provider";
+import { AvisoAtualizacao } from "@/components/aviso-atualizacao";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import appCss from "../styles.css?url";
 
 const APP_NAME = "Controle de Prazos";
+
+const SEM_CORRETOR = new Set(["password", "email", "date", "month", "number", "checkbox", "radio", "file", "hidden", "range", "color"]);
+
+function ativarCorretor(alvo: EventTarget | null) {
+  if (!(alvo instanceof HTMLInputElement || alvo instanceof HTMLTextAreaElement)) return;
+  if (alvo instanceof HTMLInputElement && SEM_CORRETOR.has(alvo.type)) return;
+  alvo.spellcheck = true;
+  alvo.lang = "pt-BR";
+  alvo.setAttribute("autocorrect", "on");
+}
+
+function CorretorOrtografico() {
+  useEffect(() => {
+    const noFoco = (evento: FocusEvent) => ativarCorretor(evento.target);
+    document.addEventListener("focusin", noFoco);
+    document.querySelectorAll("input, textarea").forEach((campo) => ativarCorretor(campo));
+    return () => document.removeEventListener("focusin", noFoco);
+  }, []);
+  return null;
+}
 
 export const Route = createRootRoute({
   head: () => ({
@@ -30,13 +52,15 @@ export const Route = createRootRoute({
     ],
   }),
   component: () => (
-    <html lang="pt-BR" suppressHydrationWarning>
+    <html lang="pt-BR" spellCheck suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
       <body>
+        <CorretorOrtografico />
         <PreviewHostBridge />
         <AuthProvider>
+          <AvisoAtualizacao />
           <Outlet />
         </AuthProvider>
         <Scripts />

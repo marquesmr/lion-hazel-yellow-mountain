@@ -1,0 +1,507 @@
+import { createServerFn } from "@tanstack/react-start";
+import { getSql } from "@/lib/db";
+import { authMiddleware } from "@/lib/auth/middleware";
+import { modoValor, normalizarModalidade, normalizarStatus, pedePrevisao, type ProcessoAdmin } from "@/lib/admin";
+import { todayIso, type Andamento } from "@/lib/prazos";
+
+function dataOk(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function dataOpcional(value: unknown): string | null {
+  if (value == null || value === "") return null;
+  if (!dataOk(value)) throw new Error("Data inválida");
+  return value;
+}
+
+function historicoOk(value: unknown): Andamento[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 200).flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const nota = item as Partial<Andamento>;
+    if (typeof nota.id !== "string" || typeof nota.texto !== "string") return [];
+    const texto = nota.texto.trim();
+    if (!texto) return [];
+    return [
+      {
+        id: nota.id.slice(0, 80),
+        em: typeof nota.em === "string" ? nota.em.slice(0, 40) : new Date().toISOString(),
+        texto: texto.slice(0, 2000),
+        autorNome: typeof nota.autorNome === "string" ? nota.autorNome.trim().slice(0, 80) : "",
+      },
+    ];
+  });
+}
+
+function centavosOk(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0 || n > 100_000_000_000) throw new Error("Valor inválido");
+  return n;
+}
+
+function anoOpcional(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const ano = Number(value);
+  if (!Number.isInteger(ano) || ano < 2000 || ano > 2100) throw new Error("Ano do processo inválido.");
+  return ano;
+}
+
+function pecaOpcional(
+  numero: unknown,
+  ano: unknown,
+  nome: string,
+): { numero: number | null; ano: number | null } {
+  const semNumero = numero == null || numero === "";
+  const semAno = ano == null || ano === "";
+  if (semNumero && semAno) return { numero: null, ano: null };
+  const n = Number(numero);
+  const a = Number(ano);
+  if (!Number.isInteger(n) || n < 1 || n > 999999) throw new Error(`Número da ${nome} inválido.`);
+  if (!Number.isInteger(a) || a < 2000 || a > 2100) throw new Error(`Ano da ${nome} inválido.`);
+  return { numero: n, ano: a };
+}
+
+function exigirAdmin(input: unknown): ProcessoAdmin {
+  if (!input || typeof input !== "object") throw new Error("Dados inválidos");
+  const bruto = input as Partial<ProcessoAdmin>;
+  const id = typeof bruto.id === "string" ? bruto.id.trim() : "";
+  const numero = typeof bruto.numero === "string" ? bruto.numero.trim() : "";
+  const objeto = typeof bruto.objeto === "string" ? bruto.objeto.trim() : "";
+  const referencia = typeof bruto.referencia === "string" ? bruto.referencia.trim() : "";
+  if (!id) throw new Error("Dados inválidos");
+  const numeroAno = anoOpcional(bruto.numeroAno);
+  const tipo = normalizarModalidade(String(bruto.tipo));
+  if (!tipo) throw new Error("Tipo inválido");
+  const simples = tipo === "Outros" || tipo === "Doação";
+  if (!numero) throw new Error("Informe o número do processo.");
+  const tipoPeca = pecaOpcional(bruto.tipoNumero, bruto.tipoAno, "tipo");
+  const status = normalizarStatus(String(bruto.status ?? ""));
+  const hoje = todayIso();
+  if (!simples && !dataOk(bruto.dataInicio)) throw new Error("Data inválida");
+  const previsaoEtapa = dataOpcional(bruto.previsaoEtapa);
+  const encerramentoInformado = dataOpcional(bruto.encerramento);
+  const alerta = Number(bruto.alertaDias);
+  if (!Number.isInteger(alerta) || alerta < 0 || alerta > 365) throw new Error("Antecedência inválida");
+  const possuiContrato = status === "execucao";
+  const vigenciaInicio = dataOpcional(bruto.vigenciaInicio);
+  const vigenciaFim = dataOpcional(bruto.vigenciaFim);
+  const contratado = typeof bruto.contratado === "string" ? bruto.contratado.trim() : "";
+  const documento = typeof bruto.documento === "string" ? bruto.documento.trim() : "";
+  const valorTotalCentavos = centavosOk(bruto.valorTotalCentavos);
+  const valorMensalCentavos = centavosOk(bruto.valorMensalCentavos);
+  const ci = pecaOpcional(bruto.ciNumero, bruto.ciAno, "comunicação interna");
+  const parecer = pecaOpcional(bruto.parecerNumero, bruto.parecerAno, "parecer");
+  const ciOrigem = typeof bruto.ciOrigem === "string" ? bruto.ciOrigem.trim() : "";
+  if (tipo !== "Outros" && tipoPeca.numero == null) throw new Error("Informe o número do tipo.");
+  if (ci.numero == null) throw new Error("Informe o número da comunicação interna.");
+  if (!ciOrigem) throw new Error("Informe de onde veio a comunicação interna.");
+  if (simples) {
+    if (!referencia) throw new Error("Informe a referência.");
+    if (!objeto) throw new Error("Informe o objeto.");
+  } else if (status !== "cancelado") {
+    if (!objeto) throw new Error("Informe o objeto.");
+    if (parecer.numero == null) throw new Error("Informe o número do parecer.");
+  }
+  if (!simples && pedePrevisao(status) && !previsaoEtapa) throw new Error("Informe a previsão de conclusão da etapa.");
+  if (!simples && status === "encerrado" && !encerramentoInformado) throw new Error("Informe a data de encerramento.");
+  const modo = modoValor(tipo, status);
+  if (modo === "contrato") {
+    if (!contratado) throw new Error("Informe os dados do contratado.");
+    if (!vigenciaInicio || !vigenciaFim) throw new Error("Informe a vigência do contrato.");
+    if (vigenciaFim < vigenciaInicio) throw new Error("A vigência termina antes de começar.");
+    if (valorTotalCentavos == null) throw new Error("Informe o valor anual do contrato.");
+    if (valorMensalCentavos == null) throw new Error("Informe o valor mensal do contrato.");
+  } else if (modo === "total" && valorTotalCentavos == null) {
+    throw new Error("Informe o valor da contratação.");
+  }
+  const encerramento =
+    simples
+      ? hoje
+      : status === "encerrado" && encerramentoInformado
+      ? encerramentoInformado
+      : status === "execucao" && vigenciaFim
+        ? vigenciaFim
+        : previsaoEtapa || bruto.dataInicio || hoje;
+  const equipeId = typeof bruto.equipeId === "string" && bruto.equipeId.trim() ? bruto.equipeId.trim().slice(0, 80) : null;
+  return {
+    id: id.slice(0, 80),
+    numero: numero.slice(0, 80),
+    numeroAno,
+    referencia: referencia.slice(0, 120),
+    objeto: objeto.slice(0, 400),
+    tipo,
+    tipoNumero: tipo === "Outros" ? null : tipoPeca.numero,
+    tipoAno: tipo === "Outros" ? null : tipoPeca.ano,
+    dataInicio: simples ? hoje : bruto.dataInicio!,
+    previsaoEtapa: !simples && pedePrevisao(status) ? previsaoEtapa : null,
+    encerramento,
+    alertaDias: alerta,
+    possuiContrato: !simples && possuiContrato,
+    vigenciaInicio: !simples && possuiContrato ? vigenciaInicio : null,
+    vigenciaFim: !simples && possuiContrato ? vigenciaFim : null,
+    contratado: !simples && possuiContrato ? contratado.slice(0, 160) : "",
+    documento: !simples && possuiContrato ? documento.slice(0, 24) : "",
+    valorTotalCentavos: simples || status === "cancelado" ? null : valorTotalCentavos,
+    valorMensalCentavos: !simples && possuiContrato ? valorMensalCentavos : null,
+    ciNumero: ci.numero,
+    ciAno: ci.ano,
+    ciOrigem: ciOrigem.slice(0, 160),
+    parecerNumero: simples || status === "cancelado" ? null : parecer.numero,
+    parecerAno: simples || status === "cancelado" ? null : parecer.ano,
+    status,
+    historico: historicoOk(bruto.historico),
+    equipeId,
+    autorId: typeof bruto.autorId === "string" && bruto.autorId.trim() ? bruto.autorId.trim().slice(0, 80) : null,
+    autorNome: typeof bruto.autorNome === "string" ? bruto.autorNome.trim().slice(0, 80) : "",
+  };
+}
+
+type Linha = {
+  id: string;
+  numero: string;
+  numero_ano: number | null;
+  referencia: string;
+  objeto: string;
+  tipo: string;
+  tipo_numero: number | null;
+  tipo_ano: number | null;
+  data_inicio: string;
+  previsao_etapa: string | null;
+  encerramento: string;
+  alerta_dias: number;
+  possui_contrato: boolean | number | string;
+  vigencia_inicio: string | null;
+  vigencia_fim: string | null;
+  contratado: string;
+  documento: string;
+  valor_total_centavos: number | null;
+  valor_mensal_centavos: number | null;
+  ci_numero: number | null;
+  ci_ano: number | null;
+  ci_origem: string | null;
+  parecer_numero: number | null;
+  parecer_ano: number | null;
+  status: string;
+  historico: string;
+  team_id: string | null;
+  autor_id: string | null;
+  autor_nome: string;
+};
+
+function dia(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return String(value).slice(0, 10);
+}
+
+function inteiroOuNulo(value: number | null | undefined): number | null {
+  if (value == null || value === ("" as unknown)) return null;
+  const n = Number(value);
+  return Number.isInteger(n) ? n : null;
+}
+
+function bool(value: boolean | number | string): boolean {
+  return value === true || value === 1 || value === "t" || value === "true";
+}
+
+function linhaParaAdmin(linha: Linha): ProcessoAdmin {
+  let historico: Andamento[] = [];
+  try {
+    historico = historicoOk(JSON.parse(linha.historico));
+  } catch {
+    historico = [];
+  }
+  const tipo = normalizarModalidade(linha.tipo) ?? "Pregão";
+  const status = normalizarStatus(linha.status);
+  const possui = bool(linha.possui_contrato);
+  const encerramento = String(linha.encerramento).slice(0, 10);
+  const previsao = dia(linha.previsao_etapa) ?? (pedePrevisao(status) ? encerramento : null);
+  return {
+    id: linha.id,
+    numero: linha.numero,
+    numeroAno: inteiroOuNulo(linha.numero_ano),
+    referencia: linha.referencia ?? "",
+    objeto: linha.objeto,
+    tipo,
+    tipoNumero: inteiroOuNulo(linha.tipo_numero),
+    tipoAno: inteiroOuNulo(linha.tipo_ano),
+    dataInicio: String(linha.data_inicio).slice(0, 10),
+    previsaoEtapa: previsao,
+    encerramento,
+    alertaDias: Number(linha.alerta_dias),
+    possuiContrato: status === "execucao" && possui,
+    vigenciaInicio: possui ? dia(linha.vigencia_inicio) : null,
+    vigenciaFim: possui ? dia(linha.vigencia_fim) : null,
+    contratado: possui ? (linha.contratado ?? "") : "",
+    documento: possui ? (linha.documento ?? "") : "",
+    valorTotalCentavos: possui && linha.valor_total_centavos != null ? Number(linha.valor_total_centavos) : null,
+    valorMensalCentavos: possui && linha.valor_mensal_centavos != null ? Number(linha.valor_mensal_centavos) : null,
+    ciNumero: inteiroOuNulo(linha.ci_numero),
+    ciAno: inteiroOuNulo(linha.ci_ano),
+    ciOrigem: linha.ci_origem ?? "",
+    parecerNumero: inteiroOuNulo(linha.parecer_numero),
+    parecerAno: inteiroOuNulo(linha.parecer_ano),
+    status,
+    historico,
+    equipeId: linha.team_id,
+    autorId: linha.autor_id,
+    autorNome: linha.autor_nome ?? "",
+  };
+}
+
+let schemaPronto: { versao: number; pendente: Promise<void> } | null = null;
+const SCHEMA_ADMIN = 3;
+
+/** Garante as colunas novas mesmo se a migração ainda não tiver rodado nesta instância. */
+async function garantirColunas(sql: Awaited<ReturnType<typeof getSql>>) {
+  if (!schemaPronto || schemaPronto.versao !== SCHEMA_ADMIN) {
+    const pendente = (async () => {
+      const comandos = [
+        "alter table processos_admin add column if not exists ci_numero integer",
+        "alter table processos_admin add column if not exists ci_ano integer",
+        "alter table processos_admin add column if not exists ci_origem text not null default ''",
+        "alter table processos_admin add column if not exists parecer_numero integer",
+        "alter table processos_admin add column if not exists parecer_ano integer",
+        "alter table processos_admin add column if not exists numero_ano integer",
+        "alter table processos_admin add column if not exists tipo_numero integer",
+        "alter table processos_admin add column if not exists tipo_ano integer",
+        "alter table processos_admin add column if not exists previsao_etapa date",
+      ];
+      for (const comando of comandos) await sql.query(comando);
+    })().catch((err) => {
+      schemaPronto = null;
+      throw err;
+    });
+    schemaPronto = { versao: SCHEMA_ADMIN, pendente };
+  }
+  await schemaPronto.pendente;
+}
+
+const SELECT_ADMIN = `
+  p.id, p.numero, p.numero_ano, p.referencia, p.objeto, p.tipo, p.tipo_numero, p.tipo_ano, p.data_inicio, p.previsao_etapa, p.encerramento,
+  p.alerta_dias, p.possui_contrato, p.vigencia_inicio, p.vigencia_fim, p.contratado,
+  p.documento, p.valor_total_centavos, p.valor_mensal_centavos,
+  p.ci_numero, p.ci_ano, p.ci_origem, p.parecer_numero, p.parecer_ano,
+  p.status, p.historico, p.team_id,
+  coalesce(nullif(p.autor_id, ''), p.user_id) as autor_id,
+  coalesce(nullif(p.autor_nome, ''), u.name, '') as autor_nome
+`;
+
+export const listarAdmin = createServerFn({ method: "GET" })
+  .validator((equipeId: unknown) => {
+    if (equipeId == null || equipeId === "") return null;
+    if (typeof equipeId !== "string" || !equipeId.trim()) throw new Error("Dados inválidos");
+    return equipeId.trim().slice(0, 80);
+  })
+  .middleware([authMiddleware])
+  .handler(async ({ context, data: equipeId }) => {
+    const sql = await getSql();
+    await garantirColunas(sql);
+    if (!equipeId) {
+      const linhas = await sql.query<Linha>(
+        `select ${SELECT_ADMIN}
+         from processos_admin p
+         left join "user" u on u.id = p.user_id
+         where p.user_id = $1 and p.team_id is null
+         order by p.encerramento asc`,
+        [context.userId],
+      );
+      return linhas.map(linhaParaAdmin);
+    }
+    const membro = await sql<{ ok: number }>`
+      select 1 as ok from equipe_membros where equipe_id = ${equipeId} and user_id = ${context.userId}
+    `;
+    if (!membro.length) throw new Error("Você não faz parte desta equipe.");
+    const linhas = await sql.query<Linha>(
+      `select ${SELECT_ADMIN}
+       from processos_admin p
+       left join "user" u on u.id = p.user_id
+       where p.team_id = $1
+       order by p.encerramento asc`,
+      [equipeId],
+    );
+    return linhas.map(linhaParaAdmin);
+  });
+
+export const salvarAdmin = createServerFn({ method: "POST" })
+  .validator(exigirAdmin)
+  .middleware([authMiddleware])
+  .handler(async ({ context, data }) => {
+    const sql = await getSql();
+    await garantirColunas(sql);
+    const eu = await sql<{ name: string | null }>`select name from "user" where id = ${context.userId}`;
+    const autorNome = (eu[0]?.name || "Sem nome").trim().slice(0, 80) || "Sem nome";
+    if (data.equipeId) {
+      const membro = await sql<{ ok: number }>`
+        select 1 as ok from equipe_membros where equipe_id = ${data.equipeId} and user_id = ${context.userId}
+      `;
+      if (!membro.length) throw new Error("Você não faz parte desta equipe.");
+    }
+    const existente = await sql<{ historico: string; user_id: string; team_id: string | null }>`
+      select historico, user_id, team_id from processos_admin where id = ${data.id}
+    `;
+    let anterior: Andamento[] = [];
+    if (existente.length) {
+      try {
+        anterior = historicoOk(JSON.parse(existente[0].historico || "[]"));
+      } catch {
+        anterior = [];
+      }
+    }
+    const conhecidos = new Map(anterior.map((item) => [item.id, item.autorNome]));
+    let historico = data.historico.map((item) => ({
+      ...item,
+      autorNome: conhecidos.get(item.id) || autorNome,
+    }));
+    if (!existente.length && historico.length === 0) {
+      historico = [
+        { id: crypto.randomUUID(), em: new Date().toISOString(), texto: "Lançou o processo administrativo.", autorNome },
+      ];
+    }
+    if (existente.length) {
+      const row = existente[0];
+      const permitido = row.team_id
+        ? row.team_id === data.equipeId
+        : !data.equipeId && row.user_id === context.userId;
+      if (!permitido) throw new Error("Não foi possível salvar");
+    }
+    const historicoJson = JSON.stringify(historico);
+    const salvos = existente.length
+      ? await sql<{ id: string }>`
+          update processos_admin set
+            numero = ${data.numero},
+            numero_ano = ${data.numeroAno},
+            referencia = ${data.referencia},
+            objeto = ${data.objeto},
+            tipo = ${data.tipo},
+            tipo_numero = ${data.tipoNumero},
+            tipo_ano = ${data.tipoAno},
+            data_inicio = ${data.dataInicio},
+            previsao_etapa = ${data.previsaoEtapa},
+            encerramento = ${data.encerramento},
+            alerta_dias = ${data.alertaDias},
+            possui_contrato = ${data.possuiContrato},
+            vigencia_inicio = ${data.vigenciaInicio},
+            vigencia_fim = ${data.vigenciaFim},
+            contratado = ${data.contratado},
+            documento = ${data.documento},
+            valor_total_centavos = ${data.valorTotalCentavos},
+            valor_mensal_centavos = ${data.valorMensalCentavos},
+            ci_numero = ${data.ciNumero},
+            ci_ano = ${data.ciAno},
+            ci_origem = ${data.ciOrigem},
+            parecer_numero = ${data.parecerNumero},
+            parecer_ano = ${data.parecerAno},
+            status = ${data.status},
+            historico = ${historicoJson}
+          where id = ${data.id}
+            and (
+              (${data.equipeId}::text is not null and team_id = ${data.equipeId})
+              or (${data.equipeId}::text is null and team_id is null and user_id = ${context.userId})
+            )
+          returning id
+        `
+      : await sql<{ id: string }>`
+          insert into processos_admin (
+            id, user_id, team_id, numero, numero_ano, referencia, objeto, tipo, tipo_numero, tipo_ano, data_inicio, previsao_etapa, encerramento,
+            alerta_dias, possui_contrato, vigencia_inicio, vigencia_fim, contratado, documento,
+            valor_total_centavos, valor_mensal_centavos, ci_numero, ci_ano, ci_origem,
+            parecer_numero, parecer_ano, status, historico, autor_id, autor_nome
+          ) values (
+            ${data.id}, ${context.userId}, ${data.equipeId}, ${data.numero}, ${data.numeroAno}, ${data.referencia},
+            ${data.objeto}, ${data.tipo}, ${data.tipoNumero}, ${data.tipoAno}, ${data.dataInicio}, ${data.previsaoEtapa}, ${data.encerramento}, ${data.alertaDias},
+            ${data.possuiContrato}, ${data.vigenciaInicio}, ${data.vigenciaFim}, ${data.contratado},
+            ${data.documento}, ${data.valorTotalCentavos}, ${data.valorMensalCentavos},
+            ${data.ciNumero}, ${data.ciAno}, ${data.ciOrigem}, ${data.parecerNumero}, ${data.parecerAno},
+            ${data.status},
+            ${historicoJson}, ${context.userId}, ${autorNome}
+          )
+          returning id
+        `;
+    if (!salvos.length) throw new Error("Não foi possível salvar");
+    return { id: salvos[0].id };
+  });
+
+export const apagarAdmin = createServerFn({ method: "POST" })
+  .validator((id: unknown) => {
+    if (typeof id !== "string" || !id.trim()) throw new Error("Dados inválidos");
+    return id.trim().slice(0, 80);
+  })
+  .middleware([authMiddleware])
+  .handler(async ({ context, data: id }) => {
+    const sql = await getSql();
+    await sql`
+      delete from processos_admin
+      where id = ${id}
+        and (
+          (team_id is null and user_id = ${context.userId})
+          or team_id in (select equipe_id from equipe_membros where user_id = ${context.userId})
+        )
+    `;
+    return { id };
+  });
+
+export const moverAdmin = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    if (!input || typeof input !== "object") throw new Error("Dados inválidos");
+    const bruto = input as { id?: unknown; equipeId?: unknown };
+    const id = typeof bruto.id === "string" ? bruto.id.trim() : "";
+    if (!id) throw new Error("Dados inválidos");
+    const equipeId =
+      bruto.equipeId == null || bruto.equipeId === ""
+        ? null
+        : typeof bruto.equipeId === "string" && bruto.equipeId.trim()
+          ? bruto.equipeId.trim().slice(0, 80)
+          : null;
+    if (bruto.equipeId && !equipeId) throw new Error("Dados inválidos");
+    return { id: id.slice(0, 80), equipeId };
+  })
+  .middleware([authMiddleware])
+  .handler(async ({ context, data }) => {
+    const sql = await getSql();
+    await garantirColunas(sql);
+    if (data.equipeId) {
+      const membro = await sql<{ ok: number }>`
+        select 1 as ok from equipe_membros where equipe_id = ${data.equipeId} and user_id = ${context.userId}
+      `;
+      if (!membro.length) throw new Error("Você não faz parte desta equipe.");
+    }
+    const existente = await sql<{ historico: string; user_id: string; team_id: string | null }>`
+      select historico, user_id, team_id from processos_admin where id = ${data.id}
+    `;
+    if (!existente.length) throw new Error("Não foi possível mover");
+    const row = existente[0];
+    if (row.team_id) {
+      const membro = await sql<{ ok: number }>`
+        select 1 as ok from equipe_membros where equipe_id = ${row.team_id} and user_id = ${context.userId}
+      `;
+      if (!membro.length) throw new Error("Não foi possível mover");
+    } else if (row.user_id !== context.userId) {
+      throw new Error("Não foi possível mover");
+    }
+    if ((row.team_id ?? null) === data.equipeId) return { id: data.id };
+    const eu = await sql<{ name: string | null }>`select name from "user" where id = ${context.userId}`;
+    const autorNome = (eu[0]?.name || "Sem nome").trim().slice(0, 80) || "Sem nome";
+    let historico: Andamento[] = [];
+    try {
+      historico = historicoOk(JSON.parse(row.historico || "[]"));
+    } catch {
+      historico = [];
+    }
+    let texto = "Moveu o processo para os seus.";
+    if (data.equipeId) {
+      const nomes = await sql<{ nome: string }>`select nome from equipes where id = ${data.equipeId}`;
+      texto = `Moveu o processo para a equipe ${nomes[0]?.nome?.trim() || "equipe"}.`;
+    }
+    historico.push({ id: crypto.randomUUID(), em: new Date().toISOString(), texto, autorNome });
+    const dono = data.equipeId ? row.user_id : context.userId;
+    const salvos = await sql<{ id: string }>`
+      update processos_admin
+      set team_id = ${data.equipeId}, user_id = ${dono}, historico = ${JSON.stringify(historico)}
+      where id = ${data.id}
+      returning id
+    `;
+    if (!salvos.length) throw new Error("Não foi possível mover");
+    return { id: salvos[0].id };
+  });
+

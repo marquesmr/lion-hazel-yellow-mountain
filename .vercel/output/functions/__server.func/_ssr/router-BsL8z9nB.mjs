@@ -3,10 +3,10 @@ import { n as require_react } from "../_libs/@radix-ui/react-compose-refs+[...].
 import { _ as createFileRoute, b as useRouter, d as Scripts, f as HeadContent, g as lazyRouteComponent, h as Outlet, m as createRouter, v as createRootRoute } from "../_libs/@tanstack/react-router+[...].mjs";
 import { n as require_jsx_runtime } from "../_libs/radix-ui__react-context+react.mjs";
 import { L as string, N as number, P as object, R as union, j as literal } from "../_libs/@better-auth/core+[...].mjs";
-import { n as auth } from "./server-D8noYjSA.mjs";
+import { n as auth } from "./server--HD7F-dx.mjs";
 import { r as TriangleAlert } from "../_libs/lucide-react.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/router-Bzftf9yZ.js
-var router_Bzftf9yZ_exports = /* @__PURE__ */ __exportAll({ getRouter: () => getRouter });
+//#region node_modules/.nitro/vite/services/ssr/assets/router-BsL8z9nB.js
+var router_BsL8z9nB_exports = /* @__PURE__ */ __exportAll({ getRouter: () => getRouter });
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 var FALLBACK_MESSAGE = "An unexpected error occurred. Try reloading the page.";
@@ -334,8 +334,8 @@ function PreviewHostBridge() {
 	}, [router]);
 	return null;
 }
-var styles_default = "/assets/styles-DRm7gSXi.css";
-var APP_NAME = "Prazos — lançamento de processos";
+var styles_default = "/assets/styles-H6v6v2LX.css";
+var APP_NAME = "Controle de Prazos";
 var Route$3 = createRootRoute({
 	head: () => ({
 		meta: [
@@ -370,7 +370,7 @@ var Route$3 = createRootRoute({
 			},
 			{
 				rel: "apple-touch-icon",
-				href: "/icon-180.png"
+				href: "/__grok/icon-180.png"
 			},
 			{
 				rel: "stylesheet",
@@ -388,9 +388,9 @@ var Route$3 = createRootRoute({
 		] })]
 	})
 });
-var $$splitComponentImporter$1 = () => import("./routes-Z-zCzAr7.mjs");
+var $$splitComponentImporter$1 = () => import("./routes-B_ErdCwJ.mjs");
 var Route$2 = createFileRoute("/")({ component: lazyRouteComponent($$splitComponentImporter$1, "component") });
-var $$splitComponentImporter = () => import("./login-Ce4Qjbdu.mjs");
+var $$splitComponentImporter = () => import("./login-BTAo5fpQ.mjs");
 var Route$1 = createFileRoute("/login")({ component: lazyRouteComponent($$splitComponentImporter, "component") });
 var Route = createFileRoute("/api/auth/$")({ server: { handlers: {
 	GET: ({ request }) => auth.handler(request),
@@ -422,4 +422,4 @@ function getRouter() {
 	});
 }
 //#endregion
-export { getRouter, router_Bzftf9yZ_exports as t };
+export { getRouter, router_BsL8z9nB_exports as t };

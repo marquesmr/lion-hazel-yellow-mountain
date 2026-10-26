@@ -3,6 +3,10 @@ export const TIPOS = ["Requerimentos", "Projetos de Lei", "Indicações", "Outro
 export type TipoProcesso = (typeof TIPOS)[number];
 export type StatusProcesso = "andamento" | "concluido";
 export type Urgencia = "vencido" | "hoje" | "proximo" | "ok" | "concluido";
+export const TIPOS_LEI = ["Lei ordinária", "Lei complementar", "Decreto legislativo", "Resolução"] as const;
+export type TipoLei = (typeof TIPOS_LEI)[number];
+export type RetornoLegislativo = "veto" | "sancionada";
+export type AlcanceVeto = "integral" | "parcial";
 
 export type Andamento = {
   id: string;
@@ -25,6 +29,12 @@ export type Processo = {
   equipeId: string | null;
   autorId: string | null;
   autorNome: string;
+  retorno: RetornoLegislativo | null;
+  vetoAlcance: AlcanceVeto | null;
+  leiTipo: TipoLei | null;
+  leiNumero: number | null;
+  leiAno: number | null;
+  apreciacaoPrazo: string | null;
 };
 
 const STORAGE_KEY = "prazos.processos.v1";
@@ -140,6 +150,12 @@ function normalizarProcesso(p: Processo): Processo {
     equipeId: p.equipeId ?? null,
     autorId: p.autorId ?? null,
     autorNome: p.autorNome ?? "",
+    retorno: p.retorno ?? null,
+    vetoAlcance: p.vetoAlcance ?? null,
+    leiTipo: p.leiTipo ?? null,
+    leiNumero: p.leiNumero ?? null,
+    leiAno: p.leiAno ?? null,
+    apreciacaoPrazo: p.apreciacaoPrazo ?? null,
     historico: (p.historico ?? []).map((item) => ({ ...item, autorNome: item.autorNome ?? "" })),
   };
 }

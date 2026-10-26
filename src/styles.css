@@ -52,4 +52,117 @@
       transition: none !important;
     }
   }
+
+  @media print {
+    @page {
+      size: A4 portrait;
+      margin: 12mm 10mm;
+    }
+
+    html,
+    body.imprimindo {
+      background: #fff !important;
+      height: auto !important;
+      min-height: 0 !important;
+      overflow: visible !important;
+    }
+
+    body.imprimindo > :not(.relatorio-folha) {
+      display: none !important;
+    }
+
+    body.imprimindo .relatorio-folha {
+      display: block !important;
+      position: static;
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      padding: 0;
+      border: 0 !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      background: #fff !important;
+      color: #1b1915;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    body.imprimindo .no-print {
+      display: none !important;
+    }
+
+    body.imprimindo .relatorio-folha .overflow-x-auto,
+    body.imprimindo .relatorio-folha .overflow-hidden {
+      overflow: visible !important;
+    }
+
+    body.imprimindo .relatorio-folha h2 {
+      font-size: 18pt;
+      line-height: 1.15;
+    }
+
+    body.imprimindo .relatorio-tabela {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 8pt;
+      line-height: 1.3;
+    }
+
+    body.imprimindo .relatorio-tabela th,
+    body.imprimindo .relatorio-tabela td {
+      border-bottom: 0.4pt solid #cfc6b8;
+      padding: 5pt 4pt;
+      vertical-align: top;
+      white-space: normal;
+      overflow-wrap: break-word;
+      word-break: normal;
+    }
+
+    body.imprimindo .relatorio-tabela th,
+    body.imprimindo .relatorio-tabela .col-fixa {
+      white-space: nowrap;
+    }
+
+    body.imprimindo .relatorio-tabela thead {
+      display: table-header-group;
+    }
+
+    body.imprimindo .relatorio-tabela th {
+      background: #e6f1eb !important;
+      color: #1c4738;
+      font-weight: 600;
+      text-align: left;
+    }
+
+    body.imprimindo .relatorio-tabela tr {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    body.imprimindo .relatorio-folha section,
+    body.imprimindo .relatorio-folha svg {
+      break-inside: avoid;
+      page-break-inside: avoid;
+      max-width: 100%;
+    }
+
+    body.imprimindo .relatorio-folha .grid {
+      display: block !important;
+    }
+
+    body.imprimindo .relatorio-folha svg {
+      width: 42mm;
+      height: 42mm;
+    }
+
+    body.imprimindo .relatorio-folha::after {
+      content: "Assistente do Poder Legislativo";
+      display: block;
+      margin-top: 10pt;
+      border-top: 0.4pt solid #e3dcd0;
+      padding-top: 6pt;
+      font-size: 8pt;
+      color: #6d665c;
+    }
+  }
 }

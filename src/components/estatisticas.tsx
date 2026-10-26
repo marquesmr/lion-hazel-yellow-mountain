@@ -2,6 +2,8 @@ import { type Processo, urgencia } from "@/lib/prazos";
 
 const ORDEM_TIPO = ["Requerimentos", "Indicações", "Projetos de Lei", "Outros"] as const;
 
+const CORES_TIPO = ["#1c4738", "#7a4510", "#3d5a4c", "#6d665c"];
+
 export function PainelEstatisticas({ processos }: { processos: Processo[] }) {
   const porTipo = ORDEM_TIPO.map((tipo) => ({
     tipo,
@@ -14,7 +16,6 @@ export function PainelEstatisticas({ processos }: { processos: Processo[] }) {
     { label: "No prazo", n: processos.filter((p) => urgencia(p) === "ok").length, cor: "#1c4738" },
     { label: "Concluídos", n: processos.filter((p) => p.status === "concluido").length, cor: "#6d665c" },
   ];
-  const maiorTipo = Math.max(1, ...porTipo.map((item) => item.n));
   const total = processos.length;
   const abertos = processos.filter((p) => p.status === "andamento").length;
 
@@ -30,7 +31,7 @@ export function PainelEstatisticas({ processos }: { processos: Processo[] }) {
   }
 
   return (
-    <div className="mt-4 grid gap-4 lg:grid-cols-[16rem_1fr]">
+    <div className="mt-4 grid gap-4 lg:grid-cols-2">
       <section className="rounded-2xl border border-line bg-sheet p-4">
         <h2 className="font-display text-2xl text-ink">Situação</h2>
         <p className="mt-1 text-sm text-muted">
@@ -52,19 +53,18 @@ export function PainelEstatisticas({ processos }: { processos: Processo[] }) {
 
       <section className="rounded-2xl border border-line bg-sheet p-4">
         <h2 className="font-display text-2xl text-ink">Por tipo</h2>
-        <ul className="mt-4 flex flex-col gap-4">
-          {porTipo.map((item) => (
-            <li key={item.tipo}>
-              <div className="flex items-baseline justify-between gap-3 text-sm">
-                <span className="font-medium text-ink">{item.tipo}</span>
-                <span className="text-muted">{item.n}</span>
-              </div>
-              <div className="mt-2 h-3 overflow-hidden rounded-full bg-paper" role="presentation">
-                <div
-                  className="h-full rounded-full bg-pine"
-                  style={{ width: `${Math.max(item.n ? 6 : 0, (item.n / maiorTipo) * 100)}%` }}
-                />
-              </div>
+        <Donut
+          fatias={porTipo.map((item, i) => ({ label: item.tipo, n: item.n, cor: CORES_TIPO[i] }))}
+          total={total}
+        />
+        <ul className="mt-2 flex flex-col gap-2">
+          {porTipo.map((item, i) => (
+            <li key={item.tipo} className="flex items-center justify-between gap-3 text-sm">
+              <span className="flex items-center gap-2 text-ink">
+                <span className="size-2.5 rounded-full" style={{ background: CORES_TIPO[i] }} />
+                {item.tipo}
+              </span>
+              <span className="font-medium text-ink">{item.n}</span>
             </li>
           ))}
         </ul>
@@ -92,6 +92,7 @@ function Donut({ fatias, total }: { fatias: { label: string; n: number; cor: str
             fill="none"
             stroke={fatia.cor}
             strokeWidth="16"
+            strokeLinecap="round"
             strokeDasharray={`${len} ${c - len}`}
             strokeDashoffset={-offset}
             transform="rotate(-90 70 70)"

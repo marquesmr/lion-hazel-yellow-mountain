@@ -1,8 +1,8 @@
 import { r as createServerFn } from "./ssr.mjs";
-import { r as getSql } from "./db-PBIMHpcn.mjs";
 import { t as createServerRpc } from "./createServerRpc-CcvdN_gc.mjs";
-import { t as authMiddleware } from "./middleware-CBpQHnaw.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/equipes.functions-C74WK7lU.js
+import { r as getSql } from "./db-DIgiGYu6.mjs";
+import { t as authMiddleware } from "./middleware-DRaEGDvO.mjs";
+//#region node_modules/.nitro/vite/services/ssr/assets/equipes.functions-b-OV4Sz9.js
 function emailOk(value) {
 	if (typeof value !== "string") throw new Error("E-mail inválido.");
 	const email = value.trim().toLowerCase();
