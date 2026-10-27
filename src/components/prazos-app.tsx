@@ -43,6 +43,8 @@ import { apagarProcesso, listarProcessos, moverProcesso, salvarProcesso } from "
 import { SoltarProcessoContext } from "@/components/soltar-processo";
 import { adicionarNaEquipe, criarEquipe, listarEquipes, removerDaEquipe, type Equipe } from "@/lib/equipes.functions";
 import { TelaConta } from "@/components/tela-conta";
+import { AutenticadorPerfil } from "@/components/autenticador";
+import { TrocaSenhaPerfil } from "@/components/troca-senha";
 import { PainelEstatisticas } from "@/components/estatisticas";
 import { AdminPainel } from "@/components/admin-painel";
 
@@ -199,7 +201,7 @@ export function PrazosApp() {
   const [equipes, setEquipes] = useState<Equipe[]>([]);
   const [equipeAtual, setEquipeAtual] = useState<string | null>(null);
   const [tipoAba, setTipoAba] = useState<TipoProcesso | "todos">("todos");
-  const [ordemCampo, setOrdemCampo] = useState<OrdemCampo>("prazo");
+  const [ordemCampo, setOrdemCampo] = useState<OrdemCampo>("numero");
   const [ordemDir, setOrdemDir] = useState<"asc" | "desc">("asc");
   const [guia, setGuia] = useState<Guia>("lista");
   const [perfilOpen, setPerfilOpen] = useState(false);
@@ -255,6 +257,19 @@ export function PrazosApp() {
       cancelado = true;
     };
   }, [user?.id, equipeAtual]);
+
+  useEffect(() => {
+    if (!user?.id || !ready) return;
+    const id = window.setInterval(() => {
+      void listarProcessos({ data: equipeAtual })
+        .then((lista) => setProcessos(lista))
+        .catch(() => undefined);
+      void listarEquipes()
+        .then((minhas) => setEquipes(minhas))
+        .catch(() => undefined);
+    }, 30_000);
+    return () => window.clearInterval(id);
+  }, [user?.id, equipeAtual, ready]);
 
   const atencao = useMemo(
     () => ordenar(processos.filter((p) => precisaAviso(p))),
@@ -1271,6 +1286,8 @@ export function PrazosApp() {
                 </button>
               </div>
             </form>
+            <TrocaSenhaPerfil />
+            <AutenticadorPerfil />
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

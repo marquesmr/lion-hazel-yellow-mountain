@@ -90,6 +90,7 @@ function exigirAdmin(input: unknown): ProcessoAdmin {
   const documento = typeof bruto.documento === "string" ? bruto.documento.trim() : "";
   const valorTotalCentavos = centavosOk(bruto.valorTotalCentavos);
   const valorMensalCentavos = centavosOk(bruto.valorMensalCentavos);
+  const valorEstimadoCentavos = centavosOk(bruto.valorEstimadoCentavos);
   const ci = pecaOpcional(bruto.ciNumero, bruto.ciAno, "comunicação interna");
   const parecer = pecaOpcional(bruto.parecerNumero, bruto.parecerAno, "parecer");
   const ciOrigem = typeof bruto.ciOrigem === "string" ? bruto.ciOrigem.trim() : "";
@@ -113,7 +114,7 @@ function exigirAdmin(input: unknown): ProcessoAdmin {
     if (valorTotalCentavos == null) throw new Error("Informe o valor anual do contrato.");
     if (valorMensalCentavos == null) throw new Error("Informe o valor mensal do contrato.");
   } else if (modo === "total" && valorTotalCentavos == null) {
-    throw new Error("Informe o valor da contratação.");
+    throw new Error("Informe o valor total.");
   }
   const encerramento =
     simples
@@ -142,8 +143,9 @@ function exigirAdmin(input: unknown): ProcessoAdmin {
     vigenciaFim: !simples && possuiContrato ? vigenciaFim : null,
     contratado: !simples && possuiContrato ? contratado.slice(0, 160) : "",
     documento: !simples && possuiContrato ? documento.slice(0, 24) : "",
-    valorTotalCentavos: simples || status === "cancelado" ? null : valorTotalCentavos,
-    valorMensalCentavos: !simples && possuiContrato ? valorMensalCentavos : null,
+    valorTotalCentavos: modo === "contrato" || modo === "total" ? valorTotalCentavos : null,
+    valorMensalCentavos: modo === "contrato" ? valorMensalCentavos : null,
+    valorEstimadoCentavos: modo === "estimado" ? valorEstimadoCentavos : null,
     ciNumero: ci.numero,
     ciAno: ci.ano,
     ciOrigem: ciOrigem.slice(0, 160),
@@ -177,6 +179,7 @@ type Linha = {
   documento: string;
   valor_total_centavos: number | null;
   valor_mensal_centavos: number | null;
+  valor_estimado_centavos: number | null;
   ci_numero: number | null;
   ci_ano: number | null;
   ci_origem: string | null;
@@ -234,8 +237,9 @@ function linhaParaAdmin(linha: Linha): ProcessoAdmin {
     vigenciaFim: possui ? dia(linha.vigencia_fim) : null,
     contratado: possui ? (linha.contratado ?? "") : "",
     documento: possui ? (linha.documento ?? "") : "",
-    valorTotalCentavos: possui && linha.valor_total_centavos != null ? Number(linha.valor_total_centavos) : null,
+    valorTotalCentavos: linha.valor_total_centavos != null ? Number(linha.valor_total_centavos) : null,
     valorMensalCentavos: possui && linha.valor_mensal_centavos != null ? Number(linha.valor_mensal_centavos) : null,
+    valorEstimadoCentavos: linha.valor_estimado_centavos != null ? Number(linha.valor_estimado_centavos) : null,
     ciNumero: inteiroOuNulo(linha.ci_numero),
     ciAno: inteiroOuNulo(linha.ci_ano),
     ciOrigem: linha.ci_origem ?? "",
@@ -250,7 +254,7 @@ function linhaParaAdmin(linha: Linha): ProcessoAdmin {
 }
 
 let schemaPronto: { versao: number; pendente: Promise<void> } | null = null;
-const SCHEMA_ADMIN = 3;
+const SCHEMA_ADMIN = 4;
 
 /** Garante as colunas novas mesmo se a migração ainda não tiver rodado nesta instância. */
 async function garantirColunas(sql: Awaited<ReturnType<typeof getSql>>) {
@@ -266,6 +270,7 @@ async function garantirColunas(sql: Awaited<ReturnType<typeof getSql>>) {
         "alter table processos_admin add column if not exists tipo_numero integer",
         "alter table processos_admin add column if not exists tipo_ano integer",
         "alter table processos_admin add column if not exists previsao_etapa date",
+        "alter table processos_admin add column if not exists valor_estimado_centavos integer",
       ];
       for (const comando of comandos) await sql.query(comando);
     })().catch((err) => {
@@ -280,7 +285,7 @@ async function garantirColunas(sql: Awaited<ReturnType<typeof getSql>>) {
 const SELECT_ADMIN = `
   p.id, p.numero, p.numero_ano, p.referencia, p.objeto, p.tipo, p.tipo_numero, p.tipo_ano, p.data_inicio, p.previsao_etapa, p.encerramento,
   p.alerta_dias, p.possui_contrato, p.vigencia_inicio, p.vigencia_fim, p.contratado,
-  p.documento, p.valor_total_centavos, p.valor_mensal_centavos,
+  p.documento, p.valor_total_centavos, p.valor_mensal_centavos, p.valor_estimado_centavos,
   p.ci_numero, p.ci_ano, p.ci_origem, p.parecer_numero, p.parecer_ano,
   p.status, p.historico, p.team_id,
   coalesce(nullif(p.autor_id, ''), p.user_id) as autor_id,
@@ -387,6 +392,7 @@ export const salvarAdmin = createServerFn({ method: "POST" })
             documento = ${data.documento},
             valor_total_centavos = ${data.valorTotalCentavos},
             valor_mensal_centavos = ${data.valorMensalCentavos},
+            valor_estimado_centavos = ${data.valorEstimadoCentavos},
             ci_numero = ${data.ciNumero},
             ci_ano = ${data.ciAno},
             ci_origem = ${data.ciOrigem},
@@ -405,13 +411,13 @@ export const salvarAdmin = createServerFn({ method: "POST" })
           insert into processos_admin (
             id, user_id, team_id, numero, numero_ano, referencia, objeto, tipo, tipo_numero, tipo_ano, data_inicio, previsao_etapa, encerramento,
             alerta_dias, possui_contrato, vigencia_inicio, vigencia_fim, contratado, documento,
-            valor_total_centavos, valor_mensal_centavos, ci_numero, ci_ano, ci_origem,
+            valor_total_centavos, valor_mensal_centavos, valor_estimado_centavos, ci_numero, ci_ano, ci_origem,
             parecer_numero, parecer_ano, status, historico, autor_id, autor_nome
           ) values (
             ${data.id}, ${context.userId}, ${data.equipeId}, ${data.numero}, ${data.numeroAno}, ${data.referencia},
             ${data.objeto}, ${data.tipo}, ${data.tipoNumero}, ${data.tipoAno}, ${data.dataInicio}, ${data.previsaoEtapa}, ${data.encerramento}, ${data.alertaDias},
             ${data.possuiContrato}, ${data.vigenciaInicio}, ${data.vigenciaFim}, ${data.contratado},
-            ${data.documento}, ${data.valorTotalCentavos}, ${data.valorMensalCentavos},
+            ${data.documento}, ${data.valorTotalCentavos}, ${data.valorMensalCentavos}, ${data.valorEstimadoCentavos},
             ${data.ciNumero}, ${data.ciAno}, ${data.ciOrigem}, ${data.parecerNumero}, ${data.parecerAno},
             ${data.status},
             ${historicoJson}, ${context.userId}, ${autorNome}

@@ -1,8 +1,9 @@
-export const VERSAO_APP = "2026.10.26.4";
+export const VERSAO_APP = "2026.10.27.4";
 
 /** Somente o que entrou na última atualização. */
 export const NOVIDADES = [
-  "Cards administrativos mais curtos. O restante fica em Detalhes.",
-  "A lista administrativa mostra três colunas e três linhas por parte.",
-  "Todos os gráficos passam a ser redondos.",
+  "A lista administrativa mostra três colunas e quatro linhas por parte.",
+  "Fora de execução e de encerrado, o valor estimado é opcional.",
+  "Os gráficos de valor mostram o número do processo e a referência.",
+  "Os dados se atualizam sozinhos a cada 30 segundos.",
 ];

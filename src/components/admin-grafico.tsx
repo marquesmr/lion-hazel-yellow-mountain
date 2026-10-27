@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { formatarReais, MODALIDADES, STATUS_ADMIN, statusAdminLabel, type ProcessoAdmin } from "@/lib/admin";
+import { formatarReais, MODALIDADES, rotuloNumero, STATUS_ADMIN, statusAdminLabel, type ProcessoAdmin } from "@/lib/admin";
 
 type Vista = "situacao" | "tipo" | "anual" | "mensal" | "valorTipo";
 type Fatia = { label: string; valor: number; cor: string; texto: string };
@@ -84,12 +84,25 @@ function VistaTipo({ processos }: { processos: ProcessoAdmin[] }) {
   return <Rosca fatias={fatias} centro={String(processos.length)} legenda="processos" />;
 }
 
+function rotuloProcesso(p: ProcessoAdmin): string {
+  const numero = p.numero ? rotuloNumero(p.numero, p.numeroAno) : "";
+  const referencia = p.referencia.trim();
+  if (numero && referencia) return `${numero} · ${referencia}`;
+  return numero || referencia || p.tipo;
+}
+
+function valorAnualOuEstimado(p: ProcessoAdmin): { valor: number; texto: string } {
+  if ((p.valorTotalCentavos ?? 0) > 0) return { valor: p.valorTotalCentavos ?? 0, texto: formatarReais(p.valorTotalCentavos) };
+  if ((p.valorEstimadoCentavos ?? 0) > 0) return { valor: p.valorEstimadoCentavos ?? 0, texto: `${formatarReais(p.valorEstimadoCentavos)} estimado` };
+  return { valor: 0, texto: formatarReais(null) };
+}
 function VistaValores({ processos, mensal }: { processos: ProcessoAdmin[]; mensal: boolean }) {
   const fatias = processos
     .map((p, i) => {
-      const valor = (mensal ? p.valorMensalCentavos : p.valorTotalCentavos) ?? 0;
-      const numero = p.numero ? `${p.numero}/${p.numeroAno ?? ""}`.replace(/\/$/, "") : p.referencia || p.tipo;
-      return { label: numero, valor, texto: formatarReais(valor), cor: CORES[i % CORES.length] };
+      const anual = valorAnualOuEstimado(p);
+      const valor = mensal ? (p.valorMensalCentavos ?? 0) : anual.valor;
+      const texto = mensal ? formatarReais(p.valorMensalCentavos) : anual.texto;
+      return { label: rotuloProcesso(p), valor, texto, cor: CORES[i % CORES.length] };
     })
     .filter((item) => item.valor > 0)
     .sort((a, b) => b.valor - a.valor);
@@ -100,7 +113,7 @@ function VistaValores({ processos, mensal }: { processos: ProcessoAdmin[]; mensa
 
 function VistaValorTipo({ processos }: { processos: ProcessoAdmin[] }) {
   const fatias = MODALIDADES.map((tipo, i) => {
-    const valor = processos.filter((p) => p.tipo === tipo).reduce((soma, p) => soma + (p.valorTotalCentavos ?? 0), 0);
+    const valor = processos.filter((p) => p.tipo === tipo).reduce((soma, p) => soma + valorAnualOuEstimado(p).valor, 0);
     return { label: tipo, valor, texto: formatarReais(valor), cor: CORES[i % CORES.length] };
   }).filter((item) => item.valor > 0);
   const soma = fatias.reduce((total, item) => total + item.valor, 0);

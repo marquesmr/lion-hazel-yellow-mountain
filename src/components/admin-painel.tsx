@@ -63,6 +63,7 @@ type FormAdmin = {
   documento: string;
   valorTotal: string;
   valorMensal: string;
+  valorEstimado: string;
   ciNumero: string;
   ciAno: number;
   ciOrigem: string;
@@ -130,6 +131,7 @@ function vazio(): FormAdmin {
     documento: "",
     valorTotal: "",
     valorMensal: "",
+    valorEstimado: "",
     ciNumero: "",
     ciAno: new Date().getFullYear(),
     ciOrigem: "",
@@ -168,6 +170,7 @@ function doProcesso(p: ProcessoAdmin): FormAdmin {
     documento: p.documento,
     valorTotal: centavosParaCampo(p.valorTotalCentavos),
     valorMensal: centavosParaCampo(p.valorMensalCentavos),
+    valorEstimado: centavosParaCampo(p.valorEstimadoCentavos),
     ciNumero: p.ciNumero != null ? String(p.ciNumero) : "",
     ciAno: p.ciAno ?? new Date().getFullYear(),
     ciOrigem: p.ciOrigem,
@@ -187,6 +190,9 @@ function validar(form: FormAdmin): string[] {
     if (numeroPeca(form.ciNumero) == null) erros.push("Informe o número da comunicação interna.");
     if (!form.ciOrigem.trim()) erros.push("Informe de onde veio a comunicação interna.");
     if (form.tipo === "Doação" && numeroPeca(form.tipoNumero) == null) erros.push("Informe o número do tipo.");
+    if (form.status !== "execucao" && form.status !== "encerrado" && form.valorEstimado.trim() && reaisParaCentavos(form.valorEstimado) == null) {
+      erros.push("O valor estimado está inválido.");
+    }
     return erros;
   }
   const erros: string[] = [];
@@ -211,8 +217,10 @@ function validar(form: FormAdmin): string[] {
     else if (form.vigenciaFim < form.vigenciaInicio) erros.push("A vigência termina antes de começar.");
     if (reaisParaCentavos(form.valorTotal) == null) erros.push("Informe o valor anual do contrato.");
     if (reaisParaCentavos(form.valorMensal) == null) erros.push("Informe o valor mensal do contrato.");
-  } else if (!cancelado && reaisParaCentavos(form.valorTotal) == null) {
-    erros.push(form.status === "encerrado" || form.tipo === "Pronto Pagamento" ? "Informe o valor total." : "Informe o valor da contratação.");
+  } else if (form.status === "encerrado" && reaisParaCentavos(form.valorTotal) == null) {
+    erros.push("Informe o valor total.");
+  } else if (form.status !== "encerrado" && form.valorEstimado.trim() && reaisParaCentavos(form.valorEstimado) == null) {
+    erros.push("O valor estimado está inválido.");
   }
   return erros;
 }
@@ -266,6 +274,7 @@ function montar(form: FormAdmin, base: Pick<ProcessoAdmin, "id" | "historico" | 
       documento: "",
       valorTotalCentavos: null,
       valorMensalCentavos: null,
+      valorEstimadoCentavos: form.status === "execucao" || form.status === "encerrado" ? null : reaisParaCentavos(form.valorEstimado),
       ciNumero: numeroPeca(form.ciNumero),
       ciAno: form.ciAno,
       ciOrigem: form.ciOrigem.trim(),
@@ -279,8 +288,9 @@ function montar(form: FormAdmin, base: Pick<ProcessoAdmin, "id" | "historico" | 
     };
   }
   const execucao = form.status === "execucao";
+  const encerrado = form.status === "encerrado";
   const cancelado = form.status === "cancelado";
-  const comValor = !cancelado;
+  const comValor = encerrado;
   const previsao = pedePrevisao(form.status) ? form.previsao : null;
   const encerramento =
     form.status === "encerrado"
@@ -306,8 +316,9 @@ function montar(form: FormAdmin, base: Pick<ProcessoAdmin, "id" | "historico" | 
     vigenciaFim: execucao ? form.vigenciaFim : null,
     contratado: execucao ? form.contratado.trim() : "",
     documento: execucao ? form.documento.trim() : "",
-    valorTotalCentavos: comValor ? reaisParaCentavos(form.valorTotal) : null,
+    valorTotalCentavos: comValor || execucao ? reaisParaCentavos(form.valorTotal) : null,
     valorMensalCentavos: execucao ? reaisParaCentavos(form.valorMensal) : null,
+    valorEstimadoCentavos: !execucao && !encerrado ? reaisParaCentavos(form.valorEstimado) : null,
     ciNumero: numeroPeca(form.ciNumero),
     ciAno: form.ciAno,
     ciOrigem: form.ciOrigem.trim(),
@@ -343,7 +354,7 @@ export function AdminPainel({
   const [filtro, setFiltro] = useState<FiltroAdmin>("todos");
   const [tipoAba, setTipoAba] = useState<Modalidade | "todos">("todos");
   const [busca, setBusca] = useState("");
-  const [ordemCampo, setOrdemCampo] = useState<OrdemAdmin>("encerramento");
+  const [ordemCampo, setOrdemCampo] = useState<OrdemAdmin>("numero");
   const [ordemDir, setOrdemDir] = useState<"asc" | "desc">("asc");
   const [parte, setParte] = useState(0);
   const [formOpen, setFormOpen] = useState(false);
@@ -384,21 +395,30 @@ export function AdminPainel({
 
   useEffect(() => {
     if (!user?.id) return;
-    const geracao = ++listaGeracao.current;
-    setPronto(false);
-    void listarAdmin({ data: equipeAtual })
-      .then((itens) => {
-        if (listaGeracao.current !== geracao) return;
-        setLista(itens);
-      })
-      .catch(() => {
-        if (listaGeracao.current !== geracao) return;
-        setLista([]);
-        onToast("Não foi possível carregar os processos administrativos.");
-      })
-      .finally(() => {
-        if (listaGeracao.current === geracao) setPronto(true);
-      });
+    let vivo = true;
+    const carregar = (silencioso: boolean) => {
+      const geracao = ++listaGeracao.current;
+      if (!silencioso) setPronto(false);
+      void listarAdmin({ data: equipeAtual })
+        .then((itens) => {
+          if (!vivo || listaGeracao.current !== geracao) return;
+          setLista(itens);
+        })
+        .catch(() => {
+          if (!vivo || listaGeracao.current !== geracao || silencioso) return;
+          setLista([]);
+          onToast("Não foi possível carregar os processos administrativos.");
+        })
+        .finally(() => {
+          if (vivo && listaGeracao.current === geracao && !silencioso) setPronto(true);
+        });
+    };
+    carregar(false);
+    const id = window.setInterval(() => carregar(true), 30_000);
+    return () => {
+      vivo = false;
+      window.clearInterval(id);
+    };
   }, [user?.id, equipeAtual, onToast]);
 
   useEffect(() => {
@@ -467,7 +487,7 @@ export function AdminPainel({
     });
   }, [lista, filtro, busca, tipoAba, ordemCampo, ordemDir]);
 
-  const porParte = 9;
+  const porParte = 12;
   const totalPartes = Math.max(1, Math.ceil(filtrados.length / porParte));
   const parteAtual = Math.min(parte, totalPartes - 1);
   const daParte = filtrados.slice(parteAtual * porParte, parteAtual * porParte + porParte);
@@ -609,7 +629,7 @@ export function AdminPainel({
     const itens = lista
       .filter((item) => cruzaPeriodo(item, intervalo.inicio, intervalo.fim))
       .filter((item) => statusRelatorio === "todos" || item.status === statusRelatorio)
-      .sort((a, b) => dataAlvo(a).localeCompare(dataAlvo(b)) || a.numero.localeCompare(b.numero, "pt-BR", { numeric: true }));
+      .sort((a, b) => (a.numeroAno ?? 0) - (b.numeroAno ?? 0) || a.numero.localeCompare(b.numero, "pt-BR", { numeric: true }));
     setRelatorio({ ...intervalo, itens });
   }
 
@@ -618,12 +638,7 @@ export function AdminPainel({
     const itens = lista
       .filter((item) => item.ciNumero != null || item.parecerNumero != null)
       .filter((item) => ano == null || item.ciAno === ano || item.parecerAno === ano)
-      .sort(
-        (a, b) =>
-          (a.ciAno ?? 0) - (b.ciAno ?? 0) ||
-          (a.ciNumero ?? 0) - (b.ciNumero ?? 0) ||
-          a.numero.localeCompare(b.numero, "pt-BR", { numeric: true }),
-      );
+      .sort((a, b) => (a.numeroAno ?? 0) - (b.numeroAno ?? 0) || a.numero.localeCompare(b.numero, "pt-BR", { numeric: true }));
     setRelatorioPecas({
       rotulo: ano == null ? "todos os anos" : String(ano),
       itens,
@@ -1110,6 +1125,17 @@ export function AdminPainel({
                         obrigatorio
                       />
                     )}
+                    {form.status !== "execucao" && form.status !== "encerrado" && (
+                      <Campo label="Valor estimado">
+                        <input
+                          value={form.valorEstimado}
+                          onChange={(e) => setForm({ ...form, valorEstimado: mascaraReais(e.target.value) })}
+                          className={inputCls}
+                          inputMode="decimal"
+                          placeholder="0,00"
+                        />
+                      </Campo>
+                    )}
                   </>
                 ) : (
                 <>
@@ -1203,8 +1229,19 @@ export function AdminPainel({
                   </select>
                 </Campo>
                 )}
-                {form.status !== "execucao" && form.status !== "cancelado" && (
-                  <Campo label={form.status === "encerrado" || form.tipo === "Pronto Pagamento" ? "Valor total" : "Valor da contratação"}>
+                {form.status !== "execucao" && form.status !== "encerrado" && (
+                  <Campo label="Valor estimado">
+                    <input
+                      value={form.valorEstimado}
+                      onChange={(e) => setForm({ ...form, valorEstimado: mascaraReais(e.target.value) })}
+                      className={inputCls}
+                      inputMode="decimal"
+                      placeholder="0,00"
+                    />
+                  </Campo>
+                )}
+                {form.status === "encerrado" && (
+                  <Campo label="Valor total">
                     <input
                       value={form.valorTotal}
                       onChange={(e) => setForm({ ...form, valorTotal: mascaraReais(e.target.value) })}
@@ -1527,6 +1564,7 @@ function CardAdmin({
                 <Info rotulo="Contratado" valor={processo.contratado || "—"} />
                 <Info rotulo="CPF ou CNPJ" valor={processo.documento || "—"} />
                 <Info rotulo="Vigência" valor={processo.vigenciaInicio ? `${formatDate(processo.vigenciaInicio)} a ${processo.vigenciaFim ? formatDate(processo.vigenciaFim) : "—"}` : "—"} largo />
+                <Info rotulo="Valor estimado" valor={formatarReais(processo.valorEstimadoCentavos)} />
                 <Info rotulo="Valor anual" valor={formatarReais(processo.valorTotalCentavos)} />
                 <Info rotulo="Valor mensal" valor={formatarReais(processo.valorMensalCentavos)} />
                 <Info rotulo="Lançado por" valor={processo.autorNome || "sem nome"} />

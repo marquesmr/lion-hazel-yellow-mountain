@@ -48,10 +48,11 @@ export function tipoSimples(tipo: string): boolean {
   return tipo === "Outros" || tipo === "Doação";
 }
 
-export function modoValor(tipo: string, status: string): "nenhum" | "total" | "contrato" {
-  if (tipoSimples(tipo) || status === "cancelado") return "nenhum";
-  if (status === "execucao") return "contrato";
-  return "total";
+export function modoValor(tipo: string, status: string): "nenhum" | "total" | "contrato" | "estimado" {
+  if (status === "execucao" && !tipoSimples(tipo)) return "contrato";
+  if (status === "encerrado" && !tipoSimples(tipo)) return "total";
+  if (status === "execucao" || status === "encerrado") return "nenhum";
+  return "estimado";
 }
 
 export function pedePrevisao(status: StatusAdmin): boolean {
@@ -95,6 +96,7 @@ export type ProcessoAdmin = {
   documento: string;
   valorTotalCentavos: number | null;
   valorMensalCentavos: number | null;
+  valorEstimadoCentavos: number | null;
   ciNumero: number | null;
   ciAno: number | null;
   ciOrigem: string;

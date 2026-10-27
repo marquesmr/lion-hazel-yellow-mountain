@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Scale } from "lucide-react";
 import { authClient, GROK_PROVIDERS, signIn } from "@/lib/auth/client";
+import { redefinirSenhaAutenticador } from "@/lib/auth/autenticador.functions";
 
 type Modo = "entrar" | "criar" | "esqueci";
 
@@ -17,7 +18,6 @@ export function TelaConta() {
     event.preventDefault();
     if (modo === "esqueci") return;
     setErro("");
-    setAviso("");
     if (modo === "criar" && nome.trim().length < 2) {
       setErro("Informe seu nome.");
       return;
@@ -67,7 +67,7 @@ export function TelaConta() {
         Crie uma conta para lançar processos e abrir os mesmos dados em qualquer navegador, com o mesmo e-mail e senha.
       </p>
 
-      <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-line bg-sheet p-5">
+      <div className="mt-6 rounded-2xl border border-line bg-sheet p-5">
         {modo === "esqueci" ? (
           <RecuperarSenha
             emailInicial={email}
@@ -83,11 +83,9 @@ export function TelaConta() {
             }}
           />
         ) : (
-          <form onSubmit={enviar} className="flex flex-col gap-3">
+      <form onSubmit={enviar} className="flex flex-col gap-3">
         <h2 className="font-display text-2xl text-ink">{modo === "criar" ? "Criar conta" : "Entrar"}</h2>
-        {aviso && (
-          <p className="rounded-xl bg-pine-soft px-3 py-2 text-sm text-pine">{aviso}</p>
-        )}
+        {aviso && <p className="rounded-xl bg-pine-soft px-3 py-2 text-sm text-pine">{aviso}</p>}
         {erro && (
           <p role="alert" className="rounded-xl bg-seal-soft px-3 py-2 text-sm text-seal">
             {erro}
@@ -134,7 +132,6 @@ export function TelaConta() {
             onClick={() => {
               setModo("esqueci");
               setErro("");
-              setAviso("");
             }}
             className="self-start text-sm font-medium text-pine"
           >
@@ -153,13 +150,12 @@ export function TelaConta() {
           onClick={() => {
             setModo(modo === "criar" ? "entrar" : "criar");
             setErro("");
-            setAviso("");
           }}
           className="h-11 text-sm font-medium text-pine"
         >
           {modo === "criar" ? "Já tenho conta" : "Criar uma conta"}
         </button>
-        </form>
+      </form>
         )}
       </div>
 
@@ -190,156 +186,65 @@ function RecuperarSenha({
   onVoltar: () => void;
   onPronto: () => void;
 }) {
-  const [etapa, setEtapa] = useState<"email" | "codigo">("email");
   const [email, setEmail] = useState(emailInicial);
   const [codigo, setCodigo] = useState("");
   const [senha, setSenha] = useState("");
-  const [confirmar, setConfirmar] = useState("");
+  const [repete, setRepete] = useState("");
   const [erro, setErro] = useState("");
   const [enviando, setEnviando] = useState(false);
 
-  async function pedirCodigo(event?: FormEvent) {
-    event?.preventDefault();
+  async function redefinir(event: FormEvent) {
+    event.preventDefault();
     setErro("");
-    setEnviando(true);
-    try {
-      const resultado = await authClient.emailOtp.requestPasswordReset({ email: email.trim() });
-      if (resultado.error) {
-        setErro(traduzir(resultado.error.message ?? ""));
-        return;
-      }
-      setEtapa("codigo");
-    } catch (err) {
-      setErro(traduzir(err instanceof Error ? err.message : ""));
-    } finally {
-      setEnviando(false);
-    }
-  }
-
-  async function redefinir() {
-    setErro("");
-    if (!/^\d{6}$/.test(codigo.trim())) {
-      setErro("Informe o código de 6 dígitos enviado por e-mail.");
-      return;
-    }
-    if (senha.length < 8) {
-      setErro("A senha precisa ter pelo menos 8 caracteres.");
-      return;
-    }
-    if (senha !== confirmar) {
-      setErro("A confirmação não é igual à nova senha.");
+    if (senha !== repete) {
+      setErro("A repetição não é igual à nova senha.");
       return;
     }
     setEnviando(true);
     try {
-      const resultado = await authClient.emailOtp.resetPassword({
-        email: email.trim(),
-        otp: codigo.trim(),
-        password: senha,
-      });
-      if (resultado.error) {
-        setErro(traduzir(resultado.error.message ?? ""));
-        return;
-      }
+      await redefinirSenhaAutenticador({ data: { email: email.trim(), codigo, senha } });
       onPronto();
     } catch (err) {
-      setErro(traduzir(err instanceof Error ? err.message : ""));
+      setErro(err instanceof Error ? err.message : "Não foi possível redefinir a senha.");
     } finally {
       setEnviando(false);
     }
   }
 
   return (
-    <form
-      className="flex flex-col gap-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (etapa === "email") void pedirCodigo();
-        else void redefinir();
-      }}
-    >
+    <form className="flex flex-col gap-3" onSubmit={(event) => void redefinir(event)}>
       <h2 className="font-display text-2xl text-ink">Esqueci minha senha</h2>
       <p className="text-sm text-muted">
-        {etapa === "email"
-          ? "Informe o e-mail da conta. Se ele existir, enviamos um código de 6 dígitos."
-          : `Digite o código enviado para ${email} e escolha a nova senha. O código vale 10 minutos.`}
+        Digite o e-mail, o código de 6 dígitos do aplicativo autenticador e a nova senha. O código não é enviado por e-mail.
       </p>
-      {erro && (
-        <p role="alert" className="rounded-xl bg-seal-soft px-3 py-2 text-sm text-seal">
-          {erro}
-        </p>
-      )}
-      {etapa === "email" ? (
-        <>
-          <label className="flex flex-col gap-1 text-sm font-medium text-ink">
-            E-mail
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className={campo}
-              autoComplete="email"
-              required
-            />
-          </label>
-          <button
-            type="submit"
-            disabled={enviando}
-            className="inline-flex h-12 items-center justify-center rounded-xl bg-pine text-sm font-medium text-sheet disabled:opacity-60"
-          >
-            {enviando ? "Enviando…" : "Enviar código"}
-          </button>
-        </>
-      ) : (
-        <>
-          <label className="flex flex-col gap-1 text-sm font-medium text-ink">
-            Código do e-mail
-            <input
-              value={codigo}
-              onChange={(e) => setCodigo(e.target.value.replace(/\D/g, "").slice(0, 6))}
-              className={campo}
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              placeholder="000000"
-              required
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm font-medium text-ink">
-            Nova senha
-            <input
-              type="password"
-              value={senha}
-              onChange={(e) => setSenha(e.target.value)}
-              className={campo}
-              autoComplete="new-password"
-              minLength={8}
-              required
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm font-medium text-ink">
-            Confirmar nova senha
-            <input
-              type="password"
-              value={confirmar}
-              onChange={(e) => setConfirmar(e.target.value)}
-              className={campo}
-              autoComplete="new-password"
-              minLength={8}
-              required
-            />
-          </label>
-          <button
-            type="submit"
-            disabled={enviando}
-            className="inline-flex h-12 items-center justify-center rounded-xl bg-pine text-sm font-medium text-sheet disabled:opacity-60"
-          >
-            {enviando ? "Salvando…" : "Redefinir senha"}
-          </button>
-          <button type="button" onClick={() => void pedirCodigo()} disabled={enviando} className="h-11 text-sm font-medium text-pine">
-            Reenviar código
-          </button>
-        </>
-      )}
+      {erro && <p className="rounded-xl bg-seal-soft px-3 py-2 text-sm text-seal">{erro}</p>}
+      <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+        E-mail
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={campo} autoComplete="email" required />
+      </label>
+      <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+        Código do aplicativo
+        <input
+          value={codigo}
+          onChange={(e) => setCodigo(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          className={campo}
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          placeholder="000000"
+          required
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+        Nova senha
+        <input type="password" value={senha} onChange={(e) => setSenha(e.target.value)} className={campo} autoComplete="new-password" minLength={8} required />
+      </label>
+      <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+        Repetir nova senha
+        <input type="password" value={repete} onChange={(e) => setRepete(e.target.value)} className={campo} autoComplete="new-password" minLength={8} required />
+      </label>
+      <button type="submit" disabled={enviando} className="inline-flex h-12 items-center justify-center rounded-xl bg-pine text-sm font-medium text-sheet disabled:opacity-60">
+        {enviando ? "Salvando…" : "Redefinir senha"}
+      </button>
       <button type="button" onClick={onVoltar} className="h-11 text-sm font-medium text-pine">
         Voltar para entrar
       </button>

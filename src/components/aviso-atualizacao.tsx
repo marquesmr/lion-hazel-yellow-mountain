@@ -49,10 +49,11 @@ export function AvisoAtualizacao() {
               ))}
             </ul>
             <div className="mt-5 rounded-xl border border-line bg-paper p-3 text-sm text-ink">
-              <p className="font-medium">Licença MIT de uso</p>
+              <p className="font-medium">Licença GPL (Copyleft)</p>
               <p className="mt-1 text-muted">
-                O uso é livre, com atribuição da licença MIT. Esta aplicação não deve ser usada para meios comerciais,
-                venda ou exploração econômica.
+                Software livre sob a Licença Pública Geral GNU (GPL). Pode ser usado, estudado, modificado e
+                compartilhado, inclusive comercialmente, desde que as cópias e as versões modificadas permaneçam sob a
+                mesma licença e o código-fonte acompanhe quem receber o programa.
               </p>
             </div>
           </div>
