@@ -1,35 +1,46 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { Link } from "@tanstack/react-router";
 import { Scale } from "lucide-react";
 import { authClient, GROK_PROVIDERS, signIn } from "@/lib/auth/client";
-import { redefinirSenhaAutenticador } from "@/lib/auth/autenticador.functions";
+import { redefinirSenhaAutenticador, registrarAceiteTermo } from "@/lib/auth/autenticador.functions";
+import { consultarExclusao, limparAvisoExclusao } from "@/lib/gestao.functions";
+import { limparExigenciaLocal, marcarExigenciaLocal } from "@/components/autenticador";
+import { AvisoContaExcluida } from "@/components/aviso-exclusao";
+import { TermosCadastro } from "@/components/termos-cadastro";
+import { soltarTemaDaConta } from "@/lib/preferencias";
 
 type Modo = "entrar" | "criar" | "esqueci";
+const AVISO_EXCLUSAO = "prazos.conta-excluida";
+const MOTIVO_EXCLUSAO = "prazos.exclusao-motivo";
+const VISTA_EXCLUSAO = "prazos.exclusao-vista";
+
+function avisoPendente() {
+  return sessionStorage.getItem(AVISO_EXCLUSAO) === "1" && sessionStorage.getItem(VISTA_EXCLUSAO) !== "1";
+}
 
 export function TelaConta() {
-  const [modo, setModo] = useState<Modo>("criar");
+  const [modo, setModo] = useState<Modo>(() => (sessionStorage.getItem(AVISO_EXCLUSAO) === "1" ? "criar" : "entrar"));
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [erro, setErro] = useState("");
   const [aviso, setAviso] = useState("");
+  const [excluida, setExcluida] = useState(() => sessionStorage.getItem(AVISO_EXCLUSAO) === "1");
+  const [mostrarAviso, setMostrarAviso] = useState(avisoPendente);
+  const [motivoAviso, setMotivoAviso] = useState(() => sessionStorage.getItem(MOTIVO_EXCLUSAO) ?? "");
   const [enviando, setEnviando] = useState(false);
+  const [termos, setTermos] = useState(false);
 
-  async function enviar(event: FormEvent) {
-    event.preventDefault();
-    if (modo === "esqueci") return;
-    setErro("");
-    if (modo === "criar" && nome.trim().length < 2) {
-      setErro("Informe seu nome.");
-      return;
-    }
-    if (senha.length < 8) {
-      setErro("A senha precisa ter pelo menos 8 caracteres.");
-      return;
-    }
+  useEffect(() => {
+    soltarTemaDaConta();
+  }, []);
+
+  async function concluir(modoAtual: Modo) {
     setEnviando(true);
+    if (modoAtual === "criar") marcarExigenciaLocal();
     try {
       const resultado =
-        modo === "criar"
+        modoAtual === "criar"
           ? await authClient.signUp.email({
               name: nome.trim(),
               email: email.trim(),
@@ -42,29 +53,91 @@ export function TelaConta() {
               callbackURL: "/",
             });
       if (resultado.error) {
+        if (modoAtual === "criar") limparExigenciaLocal();
+        if (modoAtual === "entrar") {
+          const estado = await consultarExclusao({ data: { email: email.trim() } }).catch(() => ({ excluida: false, motivo: "" }));
+          if (estado.excluida) {
+            sessionStorage.setItem(AVISO_EXCLUSAO, "1");
+            sessionStorage.setItem(MOTIVO_EXCLUSAO, estado.motivo);
+            sessionStorage.removeItem(VISTA_EXCLUSAO);
+            setExcluida(true);
+            setMotivoAviso(estado.motivo);
+            setMostrarAviso(true);
+            setErro("");
+            return;
+          }
+        }
         setErro(traduzir(resultado.error.message ?? ""));
         return;
       }
+      if (modoAtual === "criar") void registrarAceiteTermo().catch(() => undefined);
+      void limparAvisoExclusao({ data: { email: email.trim() } }).catch(() => undefined);
+      sessionStorage.removeItem(AVISO_EXCLUSAO);
+      sessionStorage.removeItem(MOTIVO_EXCLUSAO);
+      sessionStorage.removeItem(VISTA_EXCLUSAO);
     } catch (err) {
+      if (modoAtual === "criar") limparExigenciaLocal();
       setErro(traduzir(err instanceof Error ? err.message : ""));
     } finally {
       setEnviando(false);
     }
   }
 
+  function enviar(event: FormEvent) {
+    event.preventDefault();
+    if (modo === "esqueci") return;
+    setErro("");
+    if (modo === "criar" && nome.trim().length < 2) {
+      setErro("Informe seu nome.");
+      return;
+    }
+    if (senha.length < 8) {
+      setErro("A senha precisa ter pelo menos 8 caracteres.");
+      return;
+    }
+    if (modo === "criar") {
+      setTermos(true);
+      return;
+    }
+    void concluir("entrar");
+  }
+
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 py-10">
+      {termos && (
+        <TermosCadastro
+          onVoltar={() => setTermos(false)}
+          onContinuar={() => {
+            setTermos(false);
+            void concluir("criar");
+          }}
+        />
+      )}
+      {mostrarAviso && (
+        <AvisoContaExcluida
+          motivo={motivoAviso}
+          onEntendi={() => {
+            sessionStorage.setItem(VISTA_EXCLUSAO, "1");
+            setMostrarAviso(false);
+            setExcluida(true);
+            setModo("criar");
+          }}
+        />
+      )}
       <div className="flex items-center gap-3">
         <div className="grid size-11 place-items-center rounded-xl bg-pine text-sheet" aria-hidden>
           <Scale className="size-5" strokeWidth={1.75} />
         </div>
         <div>
-          <p className="text-sm font-medium text-pine">Controle de prazos</p>
-          <h1 className="font-display text-4xl leading-none text-ink">Prazos</h1>
+          <h1 className="font-display text-2xl leading-tight text-ink sm:text-3xl">Assistente do Poder Legislativo</h1>
         </div>
       </div>
       <p className="mt-4 text-sm leading-relaxed text-muted">
-        Crie uma conta para lançar processos e abrir os mesmos dados em qualquer navegador, com o mesmo e-mail e senha.
+        {excluida
+          ? "Sua conta foi excluída e você foi desconectado. Para entrar de novo, crie outra conta."
+          : modo === "criar"
+            ? "Crie a conta com e-mail e senha. Em seguida, leia e aceite os termos de uso."
+            : "Entre com o mesmo e-mail e senha para abrir os processos neste navegador."}
       </p>
 
       <div className="mt-6 rounded-2xl border border-line bg-sheet p-5">
@@ -84,7 +157,7 @@ export function TelaConta() {
           />
         ) : (
       <form onSubmit={enviar} className="flex flex-col gap-3">
-        <h2 className="font-display text-2xl text-ink">{modo === "criar" ? "Criar conta" : "Entrar"}</h2>
+        <h2 className="font-display text-2xl text-ink">{modo === "criar" ? "Criar conta" : "Login"}</h2>
         {aviso && <p className="rounded-xl bg-pine-soft px-3 py-2 text-sm text-pine">{aviso}</p>}
         {erro && (
           <p role="alert" className="rounded-xl bg-seal-soft px-3 py-2 text-sm text-seal">
@@ -143,7 +216,7 @@ export function TelaConta() {
           disabled={enviando}
           className="inline-flex h-12 items-center justify-center rounded-xl bg-pine text-sm font-medium text-sheet disabled:opacity-60"
         >
-          {enviando ? "Aguarde…" : modo === "criar" ? "Criar conta" : "Entrar"}
+          {enviando ? "Aguarde…" : modo === "criar" ? "Criar conta" : "Login"}
         </button>
         <button
           type="button"
@@ -153,7 +226,7 @@ export function TelaConta() {
           }}
           className="h-11 text-sm font-medium text-pine"
         >
-          {modo === "criar" ? "Já tenho conta" : "Criar uma conta"}
+          {modo === "criar" ? "Login" : "Criar conta"}
         </button>
       </form>
         )}
@@ -171,6 +244,12 @@ export function TelaConta() {
           </button>
         ))}
       </div>
+      <Link
+        to="/gestao"
+        className="mt-6 inline-flex h-11 w-full items-center justify-center rounded-xl border border-line bg-sheet text-sm font-medium text-ink"
+      >
+        Área restrita
+      </Link>
     </main>
   );
 }

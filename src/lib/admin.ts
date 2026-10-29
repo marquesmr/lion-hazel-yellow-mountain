@@ -13,7 +13,7 @@ export const MODALIDADES = [
   "Outros",
 ] as const;
 
-export type Modalidade = (typeof MODALIDADES)[number];
+export type Modalidade = (typeof MODALIDADES)[number] | (string & {});
 
 const MODALIDADES_ANTIGAS: Record<string, Modalidade> = {
   "Diálogo competitivo": "Diálogo Competitivo",
@@ -23,8 +23,11 @@ const MODALIDADES_ANTIGAS: Record<string, Modalidade> = {
 };
 
 export function normalizarModalidade(raw: string): Modalidade | null {
-  if ((MODALIDADES as readonly string[]).includes(raw)) return raw as Modalidade;
-  return MODALIDADES_ANTIGAS[raw] ?? null;
+  const nome = raw.trim().replace(/\s+/g, " ");
+  if ((MODALIDADES as readonly string[]).includes(nome)) return nome as Modalidade;
+  if (MODALIDADES_ANTIGAS[nome]) return MODALIDADES_ANTIGAS[nome];
+  if (!/^[\p{L}\p{N}][\p{L}\p{N} .\/'-]{1,39}$/u.test(nome)) return null;
+  return nome as Modalidade;
 }
 
 export function rotuloTipo(tipo: Modalidade, numero: number | null, ano: number | null): string {
@@ -44,8 +47,27 @@ export type StatusAdmin = (typeof STATUS_ADMIN)[number];
 export type UrgenciaAdmin = "vencido" | "hoje" | "proximo" | "ok" | "encerrado" | "cancelado";
 export type PeriodoRelatorio = "mensal" | "trimestral" | "semestral" | "anual";
 
+export function exigeLinks(tipo: string): boolean {
+  if (tipoSimples(tipo)) return false;
+  return tipo !== "Pronto Pagamento" && tipo !== "Inexigibilidade de Licitação";
+}
+
+export function normalizarLink(valor: string): string | null {
+  const texto = valor.trim();
+  if (!texto) return null;
+  const comProtocolo = /^https?:\/\//i.test(texto) ? texto : `https://${texto}`;
+  try {
+    const url = new URL(comProtocolo);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (!url.hostname.includes(".")) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 export function tipoSimples(tipo: string): boolean {
-  return tipo === "Outros" || tipo === "Doação";
+  return tipo === "Outros" || tipo === "Doação" || !(MODALIDADES as readonly string[]).includes(tipo);
 }
 
 export function modoValor(tipo: string, status: string): "nenhum" | "total" | "contrato" | "estimado" {
@@ -100,6 +122,11 @@ export type ProcessoAdmin = {
   ciNumero: number | null;
   ciAno: number | null;
   ciOrigem: string;
+  linkAbertura: string;
+  linkHomologacao: string;
+  linkPncp: string;
+  linkRetificacao: string;
+  linkCancelamento: string;
   parecerNumero: number | null;
   parecerAno: number | null;
   status: StatusAdmin;
@@ -213,10 +240,60 @@ export function mascaraDocumento(texto: string): string {
   return d.length > 12 ? `${base}-${d.slice(12)}` : base;
 }
 
-/** Número da peça no formato 12/2026. */
+/** Número da peça no formato 02/2026. Abaixo de 10, duas casas. */
 export function formatarPeca(numero: number | null, ano: number | null): string {
   if (numero == null || ano == null) return "—";
-  return `${numero}/${ano}`;
+  return `${String(numero).padStart(2, "0")}/${ano}`;
+}
+
+export function daGerenciaAdministrativa(origem: string): boolean {
+  const texto = origem
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  return texto.includes("gerencia administrativa");
+}
+
+export type LinhaControle = {
+  numero: number;
+  ano: number;
+  falta: boolean;
+  referencia: string;
+  processo: string;
+};
+
+/** Do 1 até o maior número do ano. O que não foi lançado fica marcado. */
+export function sequenciaControle(
+  itens: { numero: number; ano: number; referencia: string; processo: string }[],
+): LinhaControle[] {
+  const porAno = new Map<number, Map<number, { referencias: string[]; processos: string[] }>>();
+  for (const item of itens) {
+    if (!Number.isInteger(item.numero) || item.numero < 1 || !Number.isInteger(item.ano)) continue;
+    const mapa = porAno.get(item.ano) ?? new Map<number, { referencias: string[]; processos: string[] }>();
+    porAno.set(item.ano, mapa);
+    const atual = mapa.get(item.numero) ?? { referencias: [], processos: [] };
+    const referencia = item.referencia.trim();
+    if (referencia && !atual.referencias.includes(referencia)) atual.referencias.push(referencia);
+    if (item.processo && !atual.processos.includes(item.processo)) atual.processos.push(item.processo);
+    mapa.set(item.numero, atual);
+  }
+  const linhas: LinhaControle[] = [];
+  for (const ano of [...porAno.keys()].sort((a, b) => b - a)) {
+    const mapa = porAno.get(ano);
+    if (!mapa) continue;
+    const maximo = Math.max(...mapa.keys());
+    for (let numero = 1; numero <= maximo; numero += 1) {
+      const achado = mapa.get(numero);
+      linhas.push({
+        numero,
+        ano,
+        falta: !achado,
+        referencia: achado?.referencias.join(" · ") ?? "",
+        processo: achado?.processos.join(" · ") ?? "",
+      });
+    }
+  }
+  return linhas;
 }
 
 /** Número do processo no formato 02/2026. Sem ano, devolve o número com duas casas. */

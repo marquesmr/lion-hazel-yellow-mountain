@@ -1,6 +1,6 @@
 export const TIPOS = ["Requerimentos", "Projetos de Lei", "Indicações", "Outros"] as const;
 
-export type TipoProcesso = (typeof TIPOS)[number];
+export type TipoProcesso = (typeof TIPOS)[number] | (string & {});
 export type StatusProcesso = "andamento" | "concluido";
 export type Urgencia = "vencido" | "hoje" | "proximo" | "ok" | "concluido";
 export const TIPOS_LEI = ["Lei ordinária", "Lei complementar", "Decreto legislativo", "Resolução"] as const;
@@ -13,6 +13,7 @@ export type Andamento = {
   em: string;
   texto: string;
   autorNome: string;
+  link?: string;
 };
 
 export type Processo = {
@@ -57,10 +58,34 @@ export function parseDate(iso: string): Date {
   return new Date(y || 1970, (m || 1) - 1, d || 1);
 }
 
+const semExpediente = new Set<string>();
+
+/** Datas sem expediente (feriados e recesso), no formato AAAA-MM-DD. */
+export function definirSemExpediente(datas: string[]) {
+  semExpediente.clear();
+  for (const data of datas) if (/^\d{4}-\d{2}-\d{2}$/.test(data)) semExpediente.add(data);
+}
+
+function ehDiaUtil(data: Date): boolean {
+  const dia = data.getDay();
+  if (dia === 0 || dia === 6) return false;
+  return !semExpediente.has(todayIso(data));
+}
+
 export function daysUntil(iso: string, now = new Date()): number {
-  const hoje = parseDate(todayIso(now)).getTime();
-  const alvo = parseDate(iso).getTime();
-  return Math.round((alvo - hoje) / 86_400_000);
+  const hoje = parseDate(todayIso(now));
+  const alvo = parseDate(iso);
+  if (Number.isNaN(alvo.getTime())) return 0;
+  if (hoje.getTime() === alvo.getTime()) return 0;
+  const sinal = alvo.getTime() > hoje.getTime() ? 1 : -1;
+  const cursor = new Date(hoje);
+  let total = 0;
+  for (let passo = 0; passo < 4000; passo += 1) {
+    cursor.setDate(cursor.getDate() + sinal);
+    if (ehDiaUtil(cursor)) total += sinal;
+    if (cursor.getTime() === alvo.getTime()) break;
+  }
+  return total;
 }
 
 export function formatDate(iso: string): string {
@@ -81,7 +106,7 @@ export function urgencia(p: Processo, now = new Date()): Urgencia {
 }
 
 export function prazoLabel(p: Processo, now = new Date()): string {
-  if (p.status === "concluido") return "Concluído";
+  if (p.status === "concluido") return "Arquivado";
   const dias = daysUntil(p.prazo, now);
   if (dias < 0) {
     const n = Math.abs(dias);
@@ -158,6 +183,54 @@ function normalizarProcesso(p: Processo): Processo {
     apreciacaoPrazo: p.apreciacaoPrazo ?? null,
     historico: (p.historico ?? []).map((item) => ({ ...item, autorNome: item.autorNome ?? "" })),
   };
+}
+
+export function numeroComAno(numero: string, dataLancamento?: string): string {
+  const bruto = numero.trim();
+  if (/\/\d{4}$/.test(bruto)) return bruto;
+  const ano = dataLancamento?.slice(0, 4);
+  const anoOk = ano && /^\d{4}$/.test(ano) ? ano : String(new Date().getFullYear());
+  return `${bruto}/${anoOk}`;
+}
+
+export function separarNumero(numero: string, dataLancamento?: string): { numero: string; ano: number } {
+  const completo = numeroComAno(numero, dataLancamento);
+  const corte = completo.lastIndexOf("/");
+  return { numero: completo.slice(0, corte), ano: Number(completo.slice(corte + 1)) };
+}
+
+export function juntarNumero(numero: string, ano: number): string {
+  const base = numero.trim().replace(/\/\d{4}$/, "");
+  return `${base}/${ano}`;
+}
+
+export function rotuloRetorno(p: Processo): string {
+  if (p.retorno === "veto") return p.vetoAlcance === "parcial" ? "Veto parcial" : "Veto integral";
+  if (p.retorno === "sancionada") return `Sancionada · ${p.leiTipo ?? "Lei"}`;
+  return "Sem retorno";
+}
+
+export function dataRespostaIso(p: Processo): string | null {
+  if (p.status !== "concluido") return null;
+  const marca = [...p.historico].reverse().find((item) => /conclu[ií]do/i.test(item.texto));
+  if (marca) return marca.em.slice(0, 10);
+  return p.prazo;
+}
+
+export type ClasseResposta = "no-prazo" | "fora" | "aguardando";
+
+export function classeResposta(p: Processo, now = new Date()): ClasseResposta {
+  const resposta = dataRespostaIso(p);
+  if (resposta) return resposta <= p.prazo ? "no-prazo" : "fora";
+  if (daysUntil(p.prazo, now) < 0) return "fora";
+  return "aguardando";
+}
+
+export function rotuloResposta(p: Processo, now = new Date()): string {
+  const classe = classeResposta(p, now);
+  if (classe === "no-prazo") return "Respondido no prazo";
+  if (classe === "fora") return "Não respondido no prazo";
+  return "Ainda no prazo";
 }
 
 export function avisoKey(p: Processo, now = new Date()): string {

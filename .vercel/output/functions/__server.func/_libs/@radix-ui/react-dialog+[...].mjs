@@ -2043,6 +2043,22 @@ var Dialog = /* @__PURE__ */ __name((props) => {
 		children
 	});
 }, "Dialog");
+var TRIGGER_NAME = "DialogTrigger";
+var DialogTrigger = /* @__PURE__ */ import_react.forwardRef(/* @__PURE__ */ __name(function DialogTrigger2(props, forwardedRef) {
+	const { __scopeDialog, ...triggerProps } = props;
+	const context = useDialogContext(TRIGGER_NAME, __scopeDialog);
+	const composedTriggerRef = useComposedRefs(forwardedRef, context.triggerRef);
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Primitive.button, {
+		type: "button",
+		"aria-haspopup": "dialog",
+		"aria-expanded": context.open,
+		"aria-controls": context.open ? context.contentId : void 0,
+		"data-state": getState(context.open),
+		...triggerProps,
+		ref: composedTriggerRef,
+		onClick: composeEventHandlers(props.onClick, context.onOpenToggle)
+	});
+}, "DialogTrigger"));
 var PORTAL_NAME = "DialogPortal";
 var [PortalProvider, usePortalContext] = createDialogContext(PORTAL_NAME, { forceMount: void 0 });
 var DialogPortal = /* @__PURE__ */ __name((props) => {
@@ -2247,4 +2263,4 @@ function getState(open) {
 }
 __name(getState, "getState");
 //#endregion
-export { DialogOverlay as a, require_react_dom as c, DialogDescription as i, DialogClose as n, DialogPortal as o, DialogContent as r, DialogTitle as s, Dialog as t };
+export { DialogOverlay as a, DialogTrigger as c, DialogDescription as i, require_react_dom as l, DialogClose as n, DialogPortal as o, DialogContent as r, DialogTitle as s, Dialog as t };

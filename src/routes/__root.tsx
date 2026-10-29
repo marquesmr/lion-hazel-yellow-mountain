@@ -1,11 +1,31 @@
 import { useEffect } from "react";
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth/provider";
-import { AvisoAtualizacao } from "@/components/aviso-atualizacao";
+import { limparRecargaModulo } from "@/lib/error-component";
+import { AplicarTema } from "@/components/aplicar-tema";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import appCss from "../styles.css?url";
 
 const APP_NAME = "Controle de Prazos";
+
+function hostPublico() {
+  const bruto = String(import.meta.env.VITE_PUBLIC_HOSTNAME ?? "")
+    .split(",")[0]
+    .trim()
+    .split(":")[0]
+    .toLowerCase();
+  if (!bruto || !/^[a-z0-9.-]+$/.test(bruto) || !bruto.includes(".")) return "";
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(bruto)) return "";
+  if (
+    bruto === "vercel.app" ||
+    bruto.endsWith(".vercel.app") ||
+    bruto === "vercel.com" ||
+    bruto.endsWith(".vercel.com")
+  ) {
+    return "";
+  }
+  return bruto;
+}
 
 const SEM_CORRETOR = new Set(["password", "email", "date", "month", "number", "checkbox", "radio", "file", "hidden", "range", "color"]);
 
@@ -19,6 +39,7 @@ function ativarCorretor(alvo: EventTarget | null) {
 
 function CorretorOrtografico() {
   useEffect(() => {
+    limparRecargaModulo();
     const noFoco = (evento: FocusEvent) => ativarCorretor(evento.target);
     document.addEventListener("focusin", noFoco);
     document.querySelectorAll("input, textarea").forEach((campo) => ativarCorretor(campo));
@@ -28,7 +49,10 @@ function CorretorOrtografico() {
 }
 
 export const Route = createRootRoute({
-  head: () => ({
+  head: () => {
+    const host = hostPublico();
+    const xBanner = host ? `https://${host}/x-banner.jpg` : "";
+    return {
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
@@ -39,6 +63,7 @@ export const Route = createRootRoute({
           "Lance processos, registre a data e o prazo de resposta e receba aviso quando o prazo estiver vencendo.",
       },
       { name: "theme-color", content: "#f3efe6" },
+      ...(xBanner ? [{ property: "x:game:image", content: xBanner }] : []),
     ],
     links: [
       { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
@@ -50,9 +75,10 @@ export const Route = createRootRoute({
         href: "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,650&family=Outfit:wght@400;500;600&display=swap",
       },
     ],
-  }),
+    };
+  },
   component: () => (
-    <html lang="pt-BR" spellCheck suppressHydrationWarning>
+    <html lang="pt-BR" data-tema="auto" spellCheck suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
@@ -60,7 +86,7 @@ export const Route = createRootRoute({
         <CorretorOrtografico />
         <PreviewHostBridge />
         <AuthProvider>
-          <AvisoAtualizacao />
+          <AplicarTema />
           <Outlet />
         </AuthProvider>
         <Scripts />

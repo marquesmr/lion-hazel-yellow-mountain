@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { BarChart3, FileText, Pencil, Plus, Printer, Trash2, X } from "lucide-react";
+import { BadgeCheck, Ban, BarChart3, FilePen, FileText, Link2, Megaphone, Pencil, Plus, Trash2, TriangleAlert, X } from "lucide-react";
 import {
   MODALIDADES,
   avisoAdminKey,
@@ -8,14 +8,19 @@ import {
   centavosParaCampo,
   cruzaPeriodo,
   dataAlvo,
+  exigeLinks,
   marcoAdmin,
   anosDePeca,
   formatarPeca,
+  daGerenciaAdministrativa,
+  sequenciaControle,
   formatarReais,
   intervaloPeriodo,
   marcarAvisosAdmin,
   mascaraDocumento,
   mascaraReais,
+  normalizarLink,
+  tipoSimples,
   numeroPeca,
   prazoAdminLabel,
   pedePrevisao,
@@ -31,16 +36,21 @@ import {
   type ProcessoAdmin,
   type StatusAdmin,
   type UrgenciaAdmin,
+  type LinhaControle,
 } from "@/lib/admin";
 import { apagarAdmin, listarAdmin, moverAdmin, salvarAdmin } from "@/lib/admin.functions";
+import { BotaoRelatorio } from "@/components/botao-relatorio";
+import { CampoMes } from "@/components/campo-mes";
+import { listarAbas } from "@/lib/gestao.functions";
 import { SoltarProcessoContext } from "@/components/soltar-processo";
 import { GraficoAdmin } from "@/components/admin-grafico";
+import { Timbrado, TimbradoRodape } from "@/components/timbrado";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { addDaysIso, formatDate, todayIso, type Andamento } from "@/lib/prazos";
 
 type FiltroAdmin = "andamento" | "proposta" | "pareceres" | "assinatura" | "execucao" | "encerrados" | "cancelados" | "atencao" | "todos";
 type OrdemAdmin = "numero" | "tipo" | "encerramento";
-type GuiaAdmin = "lista" | "estatisticas" | "relatorio";
+type GuiaAdmin = "lista" | "estatisticas" | "relatorio" | "comunicacoes" | "setores" | "pareceres";
 type StatusRelatorio = "todos" | StatusAdmin;
 type ModoRelatorio = "processos" | "pecas";
 
@@ -67,6 +77,12 @@ type FormAdmin = {
   ciNumero: string;
   ciAno: number;
   ciOrigem: string;
+  linkAbertura: string;
+  linkHomologacao: string;
+  linkPncp: string;
+  houveRetificacao: boolean;
+  linkRetificacao: string;
+  linkCancelamento: string;
   parecerNumero: string;
   parecerAno: number;
   status: StatusAdmin;
@@ -87,6 +103,18 @@ const FILTROS: { id: FiltroAdmin; label: string }[] = [
 
 const ALERTAS = [1, 3, 5, 7, 10, 15, 30, 60, 90];
 
+function correspondeFiltro(processo: ProcessoAdmin, filtro: FiltroAdmin): boolean {
+  if (filtro === "todos") return true;
+  if (filtro === "andamento") return processo.status !== "encerrado" && processo.status !== "cancelado";
+  if (filtro === "proposta") return processo.status === "proposta";
+  if (filtro === "pareceres") return processo.status === "pareceres";
+  if (filtro === "assinatura") return processo.status === "assinatura";
+  if (filtro === "execucao") return processo.status === "execucao";
+  if (filtro === "encerrados") return processo.status === "encerrado";
+  if (filtro === "cancelados") return processo.status === "cancelado";
+  return precisaAvisoAdmin(processo);
+}
+
 const TOM: Record<UrgenciaAdmin, { badge: string; bar: string }> = {
   vencido: { badge: "bg-seal-soft text-seal", bar: "bg-seal" },
   hoje: { badge: "bg-seal-soft text-seal", bar: "bg-seal" },
@@ -98,8 +126,18 @@ const TOM: Record<UrgenciaAdmin, { badge: string; bar: string }> = {
 
 const inputCls = "h-11 w-full rounded-xl border border-line bg-paper px-3 text-sm text-ink placeholder:text-muted";
 
-function evento(texto: string, autorNome: string): Andamento {
-  return { id: crypto.randomUUID(), em: new Date().toISOString(), texto, autorNome };
+const TIPOS_LINK_ANDAMENTO = [
+  { id: "publicacao", campo: "linkAbertura", rotulo: "Link de publicação", curto: "publicação" },
+  { id: "homologacao", campo: "linkHomologacao", rotulo: "Link de homologação", curto: "homologação" },
+  { id: "pncp", campo: "linkPncp", rotulo: "Link do PNCP", curto: "PNCP" },
+  { id: "retificacao", campo: "linkRetificacao", rotulo: "Link da retificação", curto: "retificação" },
+  { id: "cancelamento", campo: "linkCancelamento", rotulo: "Link de cancelamento", curto: "cancelamento" },
+] as const;
+
+type TipoLinkAndamento = (typeof TIPOS_LINK_ANDAMENTO)[number]["id"];
+
+function evento(texto: string, autorNome: string, link?: string): Andamento {
+  return { id: crypto.randomUUID(), em: new Date().toISOString(), texto, autorNome, ...(link ? { link } : {}) };
 }
 
 function mensagemErro(err: unknown): string {
@@ -135,6 +173,12 @@ function vazio(): FormAdmin {
     ciNumero: "",
     ciAno: new Date().getFullYear(),
     ciOrigem: "",
+    linkAbertura: "",
+    linkHomologacao: "",
+    linkPncp: "",
+    houveRetificacao: false,
+    linkRetificacao: "",
+    linkCancelamento: "",
     parecerNumero: "",
     parecerAno: new Date().getFullYear(),
     status: "proposta",
@@ -174,6 +218,12 @@ function doProcesso(p: ProcessoAdmin): FormAdmin {
     ciNumero: p.ciNumero != null ? String(p.ciNumero) : "",
     ciAno: p.ciAno ?? new Date().getFullYear(),
     ciOrigem: p.ciOrigem,
+    linkAbertura: p.linkAbertura,
+    linkHomologacao: p.linkHomologacao,
+    linkPncp: p.linkPncp,
+    houveRetificacao: Boolean(p.linkRetificacao),
+    linkRetificacao: p.linkRetificacao,
+    linkCancelamento: p.linkCancelamento,
     parecerNumero: p.parecerNumero != null ? String(p.parecerNumero) : "",
     parecerAno: p.parecerAno ?? new Date().getFullYear(),
     status: p.status,
@@ -181,8 +231,33 @@ function doProcesso(p: ProcessoAdmin): FormAdmin {
   };
 }
 
+function errosDeLinks(form: FormAdmin): string[] {
+  const erros: string[] = [];
+  const campos = [
+    ["link de publicação", form.linkAbertura, exigeLinks(form.tipo)],
+    ["link de homologação", form.linkHomologacao, false],
+    ["link do PNCP", form.linkPncp, false],
+  ] as const;
+  for (const [nome, valor, obrigatorio] of campos) {
+    if (!valor.trim()) {
+      if (obrigatorio) erros.push(`Informe o ${nome}.`);
+      continue;
+    }
+    if (!normalizarLink(valor)) erros.push(`O ${nome} está inválido.`);
+  }
+  if (form.houveRetificacao) {
+    if (!form.linkRetificacao.trim()) erros.push("Informe o link da retificação.");
+    else if (!normalizarLink(form.linkRetificacao)) erros.push("O link da retificação está inválido.");
+  }
+  if (form.status === "cancelado") {
+    if (!form.linkCancelamento.trim()) erros.push("Informe o link de cancelamento.");
+    else if (!normalizarLink(form.linkCancelamento)) erros.push("O link de cancelamento está inválido.");
+  }
+  return erros;
+}
+
 function validar(form: FormAdmin): string[] {
-  if (form.tipo === "Outros" || form.tipo === "Doação") {
+  if (tipoSimples(form.tipo)) {
     const erros: string[] = [];
     if (numeroPeca(form.numero) == null) erros.push("Informe o número do processo.");
     if (!form.referencia.trim()) erros.push("Informe a referência.");
@@ -190,9 +265,7 @@ function validar(form: FormAdmin): string[] {
     if (numeroPeca(form.ciNumero) == null) erros.push("Informe o número da comunicação interna.");
     if (!form.ciOrigem.trim()) erros.push("Informe de onde veio a comunicação interna.");
     if (form.tipo === "Doação" && numeroPeca(form.tipoNumero) == null) erros.push("Informe o número do tipo.");
-    if (form.status !== "execucao" && form.status !== "encerrado" && form.valorEstimado.trim() && reaisParaCentavos(form.valorEstimado) == null) {
-      erros.push("O valor estimado está inválido.");
-    }
+    erros.push(...errosDeLinks(form));
     return erros;
   }
   const erros: string[] = [];
@@ -222,6 +295,7 @@ function validar(form: FormAdmin): string[] {
   } else if (form.status !== "encerrado" && form.valorEstimado.trim() && reaisParaCentavos(form.valorEstimado) == null) {
     erros.push("O valor estimado está inválido.");
   }
+  erros.push(...errosDeLinks(form));
   return erros;
 }
 
@@ -243,6 +317,13 @@ function mudancas(antes: ProcessoAdmin, form: FormAdmin): string | null {
   const parecerNovo = formatarPeca(numeroPeca(form.parecerNumero), form.parecerAno);
   if (formatarPeca(antes.ciNumero, antes.ciAno) !== ciNova) partes.push(`a comunicação interna para ${ciNova}`);
   if (antes.ciOrigem !== form.ciOrigem.trim()) partes.push("a origem da comunicação interna");
+  if ((antes.linkAbertura || "") !== (normalizarLink(form.linkAbertura) || "")) partes.push("o link de publicação");
+  if ((antes.linkHomologacao || "") !== (normalizarLink(form.linkHomologacao) || "")) partes.push("o link de homologação");
+  if ((antes.linkPncp || "") !== (normalizarLink(form.linkPncp) || "")) partes.push("o link do PNCP");
+  const retificacaoNova = form.houveRetificacao ? normalizarLink(form.linkRetificacao) || "" : "";
+  if ((antes.linkRetificacao || "") !== retificacaoNova) partes.push(retificacaoNova ? "o link da retificação" : "a retificação");
+  const cancelamentoNovo = form.status === "cancelado" ? normalizarLink(form.linkCancelamento) || "" : "";
+  if ((antes.linkCancelamento || "") !== cancelamentoNovo) partes.push(cancelamentoNovo ? "o link de cancelamento" : "o cancelamento");
   if (formatarPeca(antes.parecerNumero, antes.parecerAno) !== parecerNovo) partes.push(`o parecer para ${parecerNovo}`);
   if (!partes.length) return null;
   if (partes.length === 1) return `Alterou ${partes[0]}.`;
@@ -251,7 +332,7 @@ function mudancas(antes: ProcessoAdmin, form: FormAdmin): string | null {
 }
 
 function montar(form: FormAdmin, base: Pick<ProcessoAdmin, "id" | "historico" | "equipeId" | "autorId" | "autorNome">): ProcessoAdmin {
-  if (form.tipo === "Outros" || form.tipo === "Doação") {
+  if (tipoSimples(form.tipo)) {
     const hoje = todayIso();
     const doacao = form.tipo === "Doação";
     return {
@@ -278,6 +359,11 @@ function montar(form: FormAdmin, base: Pick<ProcessoAdmin, "id" | "historico" | 
       ciNumero: numeroPeca(form.ciNumero),
       ciAno: form.ciAno,
       ciOrigem: form.ciOrigem.trim(),
+      linkAbertura: normalizarLink(form.linkAbertura) || "",
+      linkHomologacao: normalizarLink(form.linkHomologacao) || "",
+      linkPncp: normalizarLink(form.linkPncp) || "",
+      linkRetificacao: form.houveRetificacao ? normalizarLink(form.linkRetificacao) || "" : "",
+      linkCancelamento: form.status === "cancelado" ? normalizarLink(form.linkCancelamento) || "" : "",
       parecerNumero: null,
       parecerAno: null,
       status: form.status,
@@ -322,6 +408,11 @@ function montar(form: FormAdmin, base: Pick<ProcessoAdmin, "id" | "historico" | 
     ciNumero: numeroPeca(form.ciNumero),
     ciAno: form.ciAno,
     ciOrigem: form.ciOrigem.trim(),
+    linkAbertura: normalizarLink(form.linkAbertura) || "",
+    linkHomologacao: normalizarLink(form.linkHomologacao) || "",
+    linkPncp: normalizarLink(form.linkPncp) || "",
+    linkRetificacao: form.houveRetificacao ? normalizarLink(form.linkRetificacao) || "" : "",
+    linkCancelamento: form.status === "cancelado" ? normalizarLink(form.linkCancelamento) || "" : "",
     parecerNumero: cancelado ? null : numeroPeca(form.parecerNumero),
     parecerAno: cancelado ? null : form.parecerAno,
     status: form.status,
@@ -352,7 +443,8 @@ export function AdminPainel({
   const [pronto, setPronto] = useState(false);
   const [guia, setGuia] = useState<GuiaAdmin>("lista");
   const [filtro, setFiltro] = useState<FiltroAdmin>("todos");
-  const [tipoAba, setTipoAba] = useState<Modalidade | "todos">("todos");
+  const [tipoAba, setTipoAba] = useState<string>("todos");
+  const [abasExtra, setAbasExtra] = useState<string[]>([]);
   const [busca, setBusca] = useState("");
   const [ordemCampo, setOrdemCampo] = useState<OrdemAdmin>("numero");
   const [ordemDir, setOrdemDir] = useState<"asc" | "desc">("asc");
@@ -368,6 +460,8 @@ export function AdminPainel({
   const [novoEncerramento, setNovoEncerramento] = useState("");
   const [vigenciaInicioAnd, setVigenciaInicioAnd] = useState("");
   const [vigenciaFimAnd, setVigenciaFimAnd] = useState("");
+  const [escolhaLink, setEscolhaLink] = useState(false);
+  const [linksAndamento, setLinksAndamento] = useState<Partial<Record<TipoLinkAndamento, string>>>({});
   const [periodo, setPeriodo] = useState<PeriodoRelatorio>("mensal");
   const [ancora, setAncora] = useState(() => todayIso().slice(0, 7));
   const [statusRelatorio, setStatusRelatorio] = useState<StatusRelatorio>("todos");
@@ -382,6 +476,14 @@ export function AdminPainel({
   const [relatorioPecas, setRelatorioPecas] = useState<{ rotulo: string; itens: ProcessoAdmin[] } | null>(null);
   const sinalVisto = useRef(sinalNovo);
   const listaGeracao = useRef(0);
+
+  useEffect(() => {
+    void listarAbas()
+      .then((listaAbas) =>
+        setAbasExtra(listaAbas.administrativo.filter((nome) => !(MODALIDADES as readonly string[]).includes(nome))),
+      )
+      .catch(() => undefined);
+  }, [user?.id]);
 
   useEffect(() => {
     if (sinalNovo === sinalVisto.current) return;
@@ -457,16 +559,7 @@ export function AdminPainel({
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
     const itens = lista.filter((p) => {
-      const situacao =
-        filtro === "todos" ||
-        (filtro === "andamento" && p.status !== "encerrado" && p.status !== "cancelado") ||
-        (filtro === "proposta" && p.status === "proposta") ||
-        (filtro === "pareceres" && p.status === "pareceres") ||
-        (filtro === "assinatura" && p.status === "assinatura") ||
-        (filtro === "execucao" && p.status === "execucao") ||
-        (filtro === "encerrados" && p.status === "encerrado") ||
-        (filtro === "cancelados" && p.status === "cancelado") ||
-        (filtro === "atencao" && precisaAvisoAdmin(p));
+      const situacao = correspondeFiltro(p, filtro);
       if (!situacao || (tipoAba !== "todos" && p.tipo !== tipoAba)) return false;
       if (!q) return true;
       return [rotuloNumero(p.numero, p.numeroAno), rotuloTipo(p.tipo, p.tipoNumero, p.tipoAno), p.referencia, p.objeto, p.tipo, p.contratado, p.autorNome, p.ciOrigem, formatarPeca(p.ciNumero, p.ciAno), formatarPeca(p.parecerNumero, p.parecerAno)]
@@ -492,7 +585,18 @@ export function AdminPainel({
   const parteAtual = Math.min(parte, totalPartes - 1);
   const daParte = filtrados.slice(parteAtual * porParte, parteAtual * porParte + porParte);
   const atencao = lista.filter((p) => precisaAvisoAdmin(p));
-  const porTipo = MODALIDADES.map((tipo) => ({
+  const tiposVisiveis = [...MODALIDADES, ...abasExtra];
+  const tiposComLancamento = tiposVisiveis.filter((tipo) => lista.some((item) => item.tipo === tipo));
+  const filtrosComLancamento = FILTROS.filter((item) => {
+    if (item.id === "todos") return true;
+    return lista.some((processo) => correspondeFiltro(processo, item.id));
+  });
+
+  useEffect(() => {
+    if (tipoAba !== "todos" && !tiposComLancamento.includes(tipoAba)) setTipoAba("todos");
+    if (filtro !== "todos" && !filtrosComLancamento.some((item) => item.id === filtro)) setFiltro("todos");
+  }, [tipoAba, filtro, tiposComLancamento, filtrosComLancamento]);
+  const porTipo = tiposVisiveis.map((tipo) => ({
     rotulo: tipo,
     valor: lista.filter((p) => p.tipo === tipo).length,
   })).filter((item) => item.valor > 0);
@@ -500,6 +604,56 @@ export function AdminPainel({
     rotulo: statusAdminLabel(status),
     valor: lista.filter((p) => p.status === status).length,
   })).filter((item) => item.valor > 0);
+
+  const linhasCi = useMemo(
+    () =>
+      sequenciaControle(
+        lista
+          .filter((item) => item.ciNumero != null && item.ciAno != null && daGerenciaAdministrativa(item.ciOrigem))
+          .map((item) => ({
+            numero: item.ciNumero as number,
+            ano: item.ciAno as number,
+            referencia: item.referencia,
+            processo: rotuloNumero(item.numero, item.numeroAno),
+          })),
+      ),
+    [lista],
+  );
+  const linhasParecer = useMemo(
+    () =>
+      sequenciaControle(
+        lista
+          .filter((item) => item.parecerNumero != null && item.parecerAno != null)
+          .map((item) => ({
+            numero: item.parecerNumero as number,
+            ano: item.parecerAno as number,
+            referencia: item.referencia,
+            processo: rotuloNumero(item.numero, item.numeroAno),
+          })),
+      ),
+    [lista],
+  );
+  const gruposSetores = useMemo(() => {
+    const mapa = new Map<string, { numero: number; ano: number; referencia: string; processo: string }[]>();
+    for (const item of lista) {
+      if (item.ciNumero == null || item.ciAno == null || daGerenciaAdministrativa(item.ciOrigem)) continue;
+      const origem = item.ciOrigem.trim() || "Sem origem";
+      const atual = mapa.get(origem) ?? [];
+      atual.push({
+        numero: item.ciNumero,
+        ano: item.ciAno,
+        referencia: item.referencia,
+        processo: rotuloNumero(item.numero, item.numeroAno),
+      });
+      mapa.set(origem, atual);
+    }
+    return [...mapa.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0], "pt-BR"))
+      .map(([origem, itens]) => ({
+        origem,
+        itens: itens.sort((a, b) => b.ano - a.ano || a.numero - b.numero),
+      }));
+  }, [lista]);
 
   async function persistir(proximo: ProcessoAdmin[], salvo: ProcessoAdmin | null, apagado: string | null, ok: string) {
     const anterior = lista;
@@ -564,16 +718,29 @@ export function AdminPainel({
   async function registrarAndamento() {
     if (!andamentoId) return;
     const texto = notaAndamento.trim();
-    if (!texto) return;
     const atual = lista.find((item) => item.id === andamentoId);
     if (!atual) return;
-    const simples = atual.tipo === "Outros" || atual.tipo === "Doação";
-    const atualizado: ProcessoAdmin = {
-      ...atual,
-      status: statusAndamento,
-      historico: [...atual.historico, evento(texto, meuNome)],
-    };
-    if (!simples && pedePrevisao(statusAndamento)) {
+    const escolhidos = TIPOS_LINK_ANDAMENTO.filter((item) => item.id in linksAndamento);
+    const aplicados: { curto: string; url: string; campo: (typeof TIPOS_LINK_ANDAMENTO)[number]["campo"] }[] = [];
+    for (const item of escolhidos) {
+      const url = normalizarLink(linksAndamento[item.id] ?? "");
+      if (!url) {
+        onToast((linksAndamento[item.id] ?? "").trim() ? `O ${item.rotulo.toLowerCase()} está inválido.` : `Informe o ${item.rotulo.toLowerCase()}.`);
+        return;
+      }
+      aplicados.push({ curto: item.curto, url, campo: item.campo });
+    }
+    if (!texto && aplicados.length === 0 && statusAndamento === atual.status) return;
+    const simples = tipoSimples(atual.tipo);
+    const statusMudou = statusAndamento !== atual.status;
+    const atualizado: ProcessoAdmin = { ...atual, status: statusAndamento };
+    for (const item of aplicados) atualizado[item.campo] = item.url;
+    if (statusAndamento === "cancelado" && !atualizado.linkCancelamento) {
+      onToast("Informe o link de cancelamento.");
+      setLinksAndamento((previo) => ({ ...previo, cancelamento: previo.cancelamento ?? "" }));
+      return;
+    }
+    if (statusMudou && !simples && pedePrevisao(statusAndamento)) {
       if (!novoEncerramento) {
         onToast("Informe a nova previsão da etapa.");
         return;
@@ -581,14 +748,14 @@ export function AdminPainel({
       atualizado.previsaoEtapa = novoEncerramento;
       atualizado.encerramento = novoEncerramento;
     }
-    if (!simples && statusAndamento === "encerrado") {
+    if (statusMudou && !simples && statusAndamento === "encerrado") {
       if (!novoEncerramento) {
         onToast("Informe a data de encerramento.");
         return;
       }
       atualizado.encerramento = novoEncerramento;
     }
-    if (!simples && statusAndamento === "execucao") {
+    if (statusMudou && !simples && statusAndamento === "execucao") {
       if (!vigenciaInicioAnd || !vigenciaFimAnd) {
         onToast("Informe a vigência do contrato.");
         return;
@@ -602,12 +769,17 @@ export function AdminPainel({
       atualizado.vigenciaFim = vigenciaFimAnd;
       atualizado.encerramento = vigenciaFimAnd;
     }
-    if (statusAndamento !== atual.status) {
-      atualizado.historico = [
-        ...atual.historico,
-        evento(`Status alterado para ${statusAdminLabel(statusAndamento)}. ${texto}`, meuNome),
-      ];
-    }
+    const fraseLink =
+      aplicados.length === 0
+        ? ""
+        : aplicados.length === 1
+          ? `Adicionou o link de ${aplicados[0].curto}.`
+          : `Adicionou os links de ${aplicados.slice(0, -1).map((item) => item.curto).join(", ")} e ${aplicados[aplicados.length - 1].curto}.`;
+    const frase = [statusMudou ? `Status alterado para ${statusAdminLabel(statusAndamento)}.` : "", texto, fraseLink].filter(Boolean).join(" ");
+    atualizado.historico = [
+      ...atual.historico,
+      evento(frase, meuNome, aplicados.length === 1 ? aplicados[0].url : undefined),
+    ];
     const ok = await persistir(
       lista.map((item) => (item.id === atualizado.id ? atualizado : item)),
       atualizado,
@@ -618,6 +790,8 @@ export function AdminPainel({
     setAndamentoId(null);
     setNotaAndamento("");
     setNovoEncerramento("");
+    setLinksAndamento({});
+    setEscolhaLink(false);
   }
 
   function gerarRelatorio() {
@@ -716,6 +890,15 @@ export function AdminPainel({
             <FileText className="size-4" />
             Relatório
           </GuiaBotao>
+          <GuiaBotao ativo={guia === "comunicacoes"} onClick={() => setGuia("comunicacoes")}>
+            Comunicações Internas
+          </GuiaBotao>
+          <GuiaBotao ativo={guia === "setores"} onClick={() => setGuia("setores")}>
+            Comunicações Internas - Setores
+          </GuiaBotao>
+          <GuiaBotao ativo={guia === "pareceres"} onClick={() => setGuia("pareceres")}>
+            Pareceres do Agente de Contratações
+          </GuiaBotao>
           <button
             type="button"
             onClick={abrirFormulario}
@@ -730,6 +913,20 @@ export function AdminPainel({
           <p className="text-sm text-muted">Carregando processos administrativos…</p>
         ) : guia === "estatisticas" ? (
           <GraficoAdmin processos={lista} />
+        ) : guia === "comunicacoes" ? (
+          <ControlePecas
+            titulo="Comunicações Internas"
+            nota="Entram só as comunicações feitas pela Gerência Administrativa."
+            linhas={linhasCi}
+          />
+        ) : guia === "setores" ? (
+          <ControleSetores grupos={gruposSetores} />
+        ) : guia === "pareceres" ? (
+          <ControlePecas
+            titulo="Pareceres do Agente de Contratações"
+            nota="A sequência vai até o último parecer lançado."
+            linhas={linhasParecer}
+          />
         ) : guia === "relatorio" ? (
           <div className="flex flex-col gap-4">
             <div className="no-print flex flex-wrap gap-2">
@@ -763,12 +960,12 @@ export function AdminPainel({
               />
             ) : (
               <>
-            <div className="no-print rounded-2xl border border-line bg-sheet p-4">
+            <div className="no-print min-w-0 rounded-2xl border border-line bg-sheet p-4">
               <h2 className="font-display text-2xl text-ink">Gerar relatório</h2>
               <p className="mt-1 text-sm text-muted">
                 Entram os processos cujo início e prazo cruzam o período. O gráfico acompanha o recorte.
               </p>
-              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
                 <Campo label="Período">
                   <select value={periodo} onChange={(e) => setPeriodo(e.target.value as PeriodoRelatorio)} className={inputCls}>
                     <option value="mensal">Mensal</option>
@@ -778,7 +975,7 @@ export function AdminPainel({
                   </select>
                 </Campo>
                 <Campo label="Mês de referência">
-                  <input type="month" value={ancora} onChange={(e) => setAncora(e.target.value)} className={inputCls} />
+                  <CampoMes value={ancora} onChange={setAncora} />
                 </Campo>
                 <Campo label="Situação">
                   <select
@@ -807,24 +1004,18 @@ export function AdminPainel({
 
             {relatorio && (
               <article className="relatorio-folha rounded-2xl border border-line bg-sheet p-4 md:p-6">
+                <Timbrado />
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-medium text-pine">Processos administrativos</p>
-                    <h2 className="font-display text-3xl text-ink">Relatório · {relatorio.rotulo}</h2>
+                    <h2 className="font-display text-2xl text-ink sm:text-3xl">Relatório · {relatorio.rotulo}</h2>
                     <p className="mt-1 text-sm text-muted">
                       {formatDate(relatorio.inicio)} a {formatDate(relatorio.fim)} ·{" "}
                       {statusRelatorio === "todos" ? "todas as situações" : statusAdminLabel(statusRelatorio).toLowerCase()} ·{" "}
                       {relatorio.itens.length} {relatorio.itens.length === 1 ? "processo" : "processos"}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={(evento) => imprimirRelatorio(evento.currentTarget)}
-                    className="no-print inline-flex h-11 items-center gap-2 rounded-xl border border-line px-4 text-sm font-medium text-ink"
-                  >
-                    <Printer className="size-4" />
-                    Imprimir ou salvar PDF
-                  </button>
+                  <BotaoRelatorio />
                 </div>
                 <p className="mt-3 text-sm text-ink">
                   Valor total dos contratos no recorte: {formatarReais(totalRelatorio || null)} · mensal:{" "}
@@ -836,7 +1027,13 @@ export function AdminPainel({
                 {relatorio.itens.length === 0 ? (
                   <p className="mt-4 text-sm text-muted">Nenhum processo neste período.</p>
                 ) : (
-                  <div className="mt-4">
+                  <>
+                    <ul className="relatorio-cards mt-4 flex flex-col gap-3 md:hidden">
+                      {relatorio.itens.map((item) => (
+                        <CartaoProcesso key={item.id} item={item} />
+                      ))}
+                    </ul>
+                    <div className="relatorio-tabela-wrap mt-4 hidden md:block">
                     <table className="relatorio-tabela w-full border-collapse text-left text-sm">
                       <thead>
                         <tr className="border-b border-line text-xs text-muted">
@@ -883,8 +1080,10 @@ export function AdminPainel({
                         ))}
                       </tbody>
                     </table>
-                  </div>
+                    </div>
+                  </>
                 )}
+                <TimbradoRodape />
               </article>
             )}
               </>
@@ -902,7 +1101,7 @@ export function AdminPainel({
                     <li key={item.id} className="text-sm">
                       <span className="font-medium text-ink">{rotuloNumero(item.numero, item.numeroAno)}</span>
                       <span className="text-pine"> · {rotuloTipo(item.tipo, item.tipoNumero, item.tipoAno)}</span>
-                      <span className="block text-ink">{item.objeto}</span>
+                      <span className="block text-justify text-ink">{item.objeto}</span>
                       <span className="text-muted">{prazoAdminLabel(item)}</span>
                     </li>
                   ))}
@@ -914,14 +1113,14 @@ export function AdminPainel({
                 <Aba ativo={tipoAba === "todos"} onClick={() => setTipoAba("todos")}>
                   Todos
                 </Aba>
-                {MODALIDADES.map((tipo) => (
+                {tiposComLancamento.map((tipo) => (
                   <Aba key={tipo} ativo={tipoAba === tipo} onClick={() => setTipoAba(tipo)}>
                     {tipo}
                   </Aba>
                 ))}
               </div>
               <div className="flex gap-2 overflow-x-auto pb-1">
-                {FILTROS.map((item) => (
+                {filtrosComLancamento.map((item) => (
                   <Aba key={item.id} ativo={filtro === item.id} ink onClick={() => setFiltro(item.id)}>
                     {item.label}
                   </Aba>
@@ -986,6 +1185,8 @@ export function AdminPainel({
                       setNovoEncerramento(item.status === "encerrado" ? item.encerramento : item.previsaoEtapa ?? "");
                       setVigenciaInicioAnd(item.vigenciaInicio ?? item.dataInicio);
                       setVigenciaFimAnd(item.vigenciaFim ?? "");
+                      setLinksAndamento({});
+                      setEscolhaLink(false);
                     }}
                     onExcluir={() => setDeleteId(item.id)}
                   />
@@ -1051,7 +1252,7 @@ export function AdminPainel({
                     onChange={(e) => setForm({ ...form, tipo: e.target.value as Modalidade })}
                     className={inputCls}
                   >
-                    {MODALIDADES.map((tipo) => (
+                    {tiposVisiveis.map((tipo) => (
                       <option key={tipo}>{tipo}</option>
                     ))}
                   </select>
@@ -1069,7 +1270,7 @@ export function AdminPainel({
                     ))}
                   </select>
                 </Campo>
-                {(form.tipo === "Outros" || form.tipo === "Doação") ? (
+                {(tipoSimples(form.tipo)) ? (
                   <>
                     <PecaCampos
                       titulo="Número do processo"
@@ -1114,6 +1315,7 @@ export function AdminPainel({
                         required
                       />
                     </Campo>
+                    <CamposLinks form={form} onChange={setForm} />
                     {form.tipo === "Doação" && (
                       <PecaCampos
                         titulo="Número do tipo"
@@ -1181,6 +1383,7 @@ export function AdminPainel({
                     required
                   />
                 </Campo>
+                <CamposLinks form={form} onChange={setForm} />
                 <PecaCampos
                   titulo="Parecer do agente de contratações"
                   numero={form.parecerNumero}
@@ -1202,7 +1405,7 @@ export function AdminPainel({
                   <input type="date" value={form.dataInicio} onChange={(e) => setForm({ ...form, dataInicio: e.target.value })} className={inputCls} required />
                 </Campo>
                 {form.status === "cancelado" && (
-                  <p className="text-sm text-muted">No cancelamento, o número do processo, o número do tipo, a comunicação interna, a origem e a data de início são obrigatórios.</p>
+                  <p className="text-sm text-muted">No cancelamento, o número do processo, o número do tipo, a comunicação interna, a origem, a data de início e o link de cancelamento são obrigatórios.</p>
                 )}
                 {pedePrevisao(form.status) && (
                   <Campo label="Previsão de conclusão da etapa">
@@ -1338,7 +1541,15 @@ export function AdminPainel({
         </Dialog.Portal>
       </Dialog.Root>
 
-      <Dialog.Root open={andamentoId !== null} onOpenChange={(open) => !open && setAndamentoId(null)}>
+      <Dialog.Root
+        open={andamentoId !== null}
+        onOpenChange={(open) => {
+          if (open) return;
+          setAndamentoId(null);
+          setLinksAndamento({});
+          setEscolhaLink(false);
+        }}
+      >
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-10 bg-ink/40" />
           <Dialog.Content className="fixed inset-x-3 top-1/2 z-10 max-h-[90vh] -translate-y-1/2 overflow-y-auto rounded-2xl border border-line bg-sheet p-5 md:left-1/2 md:w-full md:max-w-md md:-translate-x-1/2">
@@ -1366,10 +1577,29 @@ export function AdminPainel({
                   value={notaAndamento}
                   onChange={(e) => setNotaAndamento(e.target.value)}
                   className="min-h-24 w-full rounded-xl border border-line bg-paper px-3 py-2 text-sm text-ink"
-                  required
                 />
               </Campo>
-              {statusAndamento !== "cancelado" && lista.find((item) => item.id === andamentoId)?.tipo !== "Outros" && lista.find((item) => item.id === andamentoId)?.tipo !== "Doação" && (
+              {TIPOS_LINK_ANDAMENTO.filter((item) => item.id in linksAndamento).map((item) => (
+                <Campo key={item.id} label={item.rotulo}>
+                  <input
+                    type="url"
+                    inputMode="url"
+                    value={linksAndamento[item.id] ?? ""}
+                    onChange={(e) => setLinksAndamento({ ...linksAndamento, [item.id]: e.target.value })}
+                    className={inputCls}
+                    placeholder="https://"
+                  />
+                </Campo>
+              ))}
+              <button
+                type="button"
+                onClick={() => setEscolhaLink(true)}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-line px-4 text-sm font-medium text-ink"
+              >
+                <Link2 className="size-4" />
+                Adicionar link
+              </button>
+              {statusAndamento !== lista.find((item) => item.id === andamentoId)?.status && statusAndamento !== "cancelado" && lista.find((item) => item.id === andamentoId)?.tipo !== "Outros" && lista.find((item) => item.id === andamentoId)?.tipo !== "Doação" && (
                 statusAndamento === "execucao" ? (
                   <div className="grid gap-3 sm:grid-cols-2">
                     <Campo label="Vigência — início">
@@ -1389,6 +1619,35 @@ export function AdminPainel({
                 Registrar
               </button>
             </form>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      <Dialog.Root open={escolhaLink} onOpenChange={setEscolhaLink}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-30 bg-ink/50" />
+          <Dialog.Content className="fixed inset-x-3 top-1/2 z-30 max-h-[90vh] -translate-y-1/2 overflow-y-auto rounded-2xl border border-line bg-sheet p-5 md:left-1/2 md:w-full md:max-w-sm md:-translate-x-1/2">
+            <Dialog.Title className="font-display text-2xl text-ink">Qual link?</Dialog.Title>
+            <Dialog.Description className="mt-1 text-sm text-muted">Escolha o link. O campo volta na tela de andamento.</Dialog.Description>
+            <div className="mt-4 flex flex-col gap-2">
+              {TIPOS_LINK_ANDAMENTO.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    const processo = lista.find((atual) => atual.id === andamentoId);
+                    setLinksAndamento((previo) => ({
+                      ...previo,
+                      [item.id]: previo[item.id] ?? (processo ? processo[item.campo] : ""),
+                    }));
+                    setEscolhaLink(false);
+                  }}
+                  className="inline-flex h-11 items-center rounded-xl border border-line px-3 text-left text-sm font-medium text-ink"
+                >
+                  {item.rotulo}
+                </button>
+              ))}
+            </div>
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
@@ -1427,24 +1686,6 @@ export function AdminPainel({
     </div>
     </SoltarProcessoContext.Provider>
   );
-}
-
-function imprimirRelatorio(alvo: EventTarget | null) {
-  const artigo = alvo instanceof HTMLElement ? alvo.closest("article") : null;
-  if (!artigo) {
-    window.print();
-    return;
-  }
-  const marca = document.createElement("span");
-  artigo.before(marca);
-  document.body.appendChild(artigo);
-  document.body.classList.add("imprimindo");
-  const voltar = () => {
-    marca.replaceWith(artigo);
-    document.body.classList.remove("imprimindo");
-  };
-  window.addEventListener("afterprint", voltar, { once: true });
-  window.print();
 }
 
 function CardAdmin({
@@ -1553,13 +1794,13 @@ function CardAdmin({
                 <Info rotulo="Número do tipo" valor={processo.tipoNumero != null ? `${String(processo.tipoNumero).padStart(2, "0")}/${processo.tipoAno ?? ""}` : "—"} />
                 <Info rotulo="Referência" valor={processo.referencia || "—"} />
                 <Info rotulo="Status" valor={statusAdminLabel(processo.status)} />
-                <Info rotulo="Objeto" valor={processo.objeto || "—"} largo />
+                <Info rotulo="Objeto" valor={processo.objeto || "—"} largo justificar />
                 <Info rotulo="Comunicação interna" valor={processo.ciNumero != null ? formatarPeca(processo.ciNumero, processo.ciAno) : "—"} />
                 <Info rotulo="Origem da CI" valor={processo.ciOrigem || "—"} />
                 <Info rotulo="Parecer" valor={processo.parecerNumero != null ? formatarPeca(processo.parecerNumero, processo.parecerAno) : "—"} />
-                <Info rotulo="Início" valor={processo.tipo === "Outros" || processo.tipo === "Doação" ? "—" : formatDate(processo.dataInicio)} />
+                <Info rotulo="Início" valor={tipoSimples(processo.tipo) ? "—" : formatDate(processo.dataInicio)} />
                 <Info rotulo="Previsão" valor={processo.previsaoEtapa ? formatDate(processo.previsaoEtapa) : "—"} />
-                <Info rotulo="Encerramento" valor={processo.tipo === "Outros" || processo.tipo === "Doação" ? "—" : formatDate(processo.encerramento)} />
+                <Info rotulo="Encerramento" valor={tipoSimples(processo.tipo) ? "—" : formatDate(processo.encerramento)} />
                 <Info rotulo="Aviso" valor={`${processo.alertaDias} dias antes`} />
                 <Info rotulo="Contratado" valor={processo.contratado || "—"} />
                 <Info rotulo="CPF ou CNPJ" valor={processo.documento || "—"} />
@@ -1570,6 +1811,33 @@ function CardAdmin({
                 <Info rotulo="Lançado por" valor={processo.autorNome || "sem nome"} />
                 <Info rotulo="Equipe" valor={equipes.find((equipe) => equipe.id === processo.equipeId)?.nome ?? "Só meus"} />
               </dl>
+              <div className="mt-4 flex flex-col gap-2">
+                {processo.linkAbertura && (
+                  <BotaoLink href={processo.linkAbertura} texto="Publicação">
+                    <Megaphone className="size-4" />
+                  </BotaoLink>
+                )}
+                {processo.linkRetificacao && (
+                  <BotaoLink href={processo.linkRetificacao} texto="Retificação">
+                    <FilePen className="size-4" />
+                  </BotaoLink>
+                )}
+                {processo.linkCancelamento && (
+                  <BotaoLink href={processo.linkCancelamento} texto="Cancelamento">
+                    <Ban className="size-4" />
+                  </BotaoLink>
+                )}
+                {processo.linkHomologacao && (
+                  <BotaoLink href={processo.linkHomologacao} texto="Homologação">
+                    <BadgeCheck className="size-4" />
+                  </BotaoLink>
+                )}
+                {processo.linkPncp && (
+                  <BotaoLink href={processo.linkPncp} texto="PNCP">
+                    <BandeiraBrasil />
+                  </BotaoLink>
+                )}
+              </div>
               <h3 className="mt-5 font-display text-xl text-ink">Histórico</h3>
               {processo.historico.length === 0 ? (
                 <p className="mt-2 text-sm text-muted">Nenhum lançamento.</p>
@@ -1583,6 +1851,17 @@ function CardAdmin({
                         {item.autorNome || "sem nome"}
                       </span>
                       <span className="mt-0.5 block text-ink">{item.texto}</span>
+                      {item.link && (
+                        <a
+                          href={item.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-1 inline-flex items-center gap-1 text-pine"
+                        >
+                          <Link2 className="size-3.5" />
+                          Link
+                        </a>
+                      )}
                     </li>
                   ))}
                 </ol>
@@ -1592,6 +1871,169 @@ function CardAdmin({
         </Dialog.Portal>
       </Dialog.Root>
     </li>
+  );
+}
+
+function ControlePecas({ titulo, nota, linhas }: { titulo: string; nota: string; linhas: LinhaControle[] }) {
+  const anos = [...new Set(linhas.map((linha) => linha.ano))].sort((a, b) => b - a);
+  const [anoEscolhido, setAnoEscolhido] = useState<number | null>(null);
+  const ano = anoEscolhido != null && anos.includes(anoEscolhido) ? anoEscolhido : anos[0];
+  const visiveis = linhas.filter((linha) => linha.ano === ano);
+  return (
+    <div className="rounded-2xl border border-line bg-sheet p-4">
+      <h2 className="font-display text-2xl text-ink">{titulo}</h2>
+      <p className="mt-1 text-sm text-muted">{nota}</p>
+      {anos.length > 1 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {anos.map((opcao) => (
+            <button
+              key={opcao}
+              type="button"
+              onClick={() => setAnoEscolhido(opcao)}
+              className={
+                "inline-flex h-9 items-center rounded-full px-3 text-sm font-medium " +
+                (opcao === ano ? "bg-ink text-sheet" : "border border-line bg-paper text-ink")
+              }
+            >
+              {opcao}
+            </button>
+          ))}
+        </div>
+      )}
+      {visiveis.length === 0 ? (
+        <p className="mt-4 text-sm text-muted">Nada lançado ainda.</p>
+      ) : (
+        <>
+          <ul className="mt-4 flex flex-col gap-2 md:hidden">
+            {visiveis.map((linha) => (
+              <li key={`${linha.ano}-${linha.numero}`} className="rounded-xl border border-line bg-paper p-3 text-sm">
+                <p className="flex items-center gap-2 font-medium text-ink">
+                  {linha.falta && <TriangleAlert className="size-4 shrink-0 text-brass" aria-label="Não lançada" />}
+                  {formatarPeca(linha.numero, linha.ano)}
+                </p>
+                <p className="mt-1 text-ink">{linha.falta ? "Não lançada" : linha.referencia || "Sem referência"}</p>
+                {!linha.falta && <p className="mt-1 text-muted">Processo {linha.processo}</p>}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-4 hidden overflow-x-auto md:block">
+            <table className="w-full border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b border-line text-muted">
+                  <th className="py-2 pr-3 font-medium">Número</th>
+                  <th className="py-2 pr-3 font-medium">Referência</th>
+                  <th className="py-2 font-medium">Processo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visiveis.map((linha) => (
+                  <tr key={`${linha.ano}-${linha.numero}`} className="border-b border-line">
+                    <td className="py-2 pr-3 font-medium text-ink">
+                      <span className="inline-flex items-center gap-2">
+                        {linha.falta && <TriangleAlert className="size-4 shrink-0 text-brass" aria-label="Não lançada" />}
+                        {formatarPeca(linha.numero, linha.ano)}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3 text-ink">{linha.falta ? "Não lançada" : linha.referencia || "Sem referência"}</td>
+                    <td className="py-2 text-ink">{linha.falta ? "—" : linha.processo}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ControleSetores({
+  grupos,
+}: {
+  grupos: { origem: string; itens: { numero: number; ano: number; referencia: string; processo: string }[] }[];
+}) {
+  const anos = [...new Set(grupos.flatMap((grupo) => grupo.itens.map((item) => item.ano)))].sort((a, b) => b - a);
+  const [anoEscolhido, setAnoEscolhido] = useState<number | null>(null);
+  const ano = anoEscolhido != null && anos.includes(anoEscolhido) ? anoEscolhido : anos[0];
+  const visiveis = grupos
+    .map((grupo) => ({ origem: grupo.origem, itens: grupo.itens.filter((item) => item.ano === ano) }))
+    .filter((grupo) => grupo.itens.length > 0);
+  return (
+    <div className="rounded-2xl border border-line bg-sheet p-4">
+      <h2 className="font-display text-2xl text-ink">Comunicações Internas - Setores</h2>
+      <p className="mt-1 text-sm text-muted">As comunicações que não são da Gerência Administrativa, juntas por setor.</p>
+      {anos.length > 1 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {anos.map((opcao) => (
+            <button
+              key={opcao}
+              type="button"
+              onClick={() => setAnoEscolhido(opcao)}
+              className={
+                "inline-flex h-9 items-center rounded-full px-3 text-sm font-medium " +
+                (opcao === ano ? "bg-ink text-sheet" : "border border-line bg-paper text-ink")
+              }
+            >
+              {opcao}
+            </button>
+          ))}
+        </div>
+      )}
+      {visiveis.length === 0 ? (
+        <p className="mt-4 text-sm text-muted">Nenhuma comunicação de outros setores.</p>
+      ) : (
+        <div className="mt-4">
+          <ul className="flex flex-col gap-4 md:hidden">
+            {visiveis.map((grupo) => (
+              <li key={grupo.origem}>
+                <p className="text-sm font-medium text-ink">{grupo.origem}</p>
+                <ul className="mt-2 flex flex-col gap-2">
+                  {grupo.itens.map((item) => (
+                    <li key={`${grupo.origem}-${item.ano}-${item.numero}-${item.processo}`} className="rounded-xl border border-line bg-paper p-3 text-sm">
+                      <p className="font-medium text-ink">{formatarPeca(item.numero, item.ano)}</p>
+                      <p className="mt-1 text-ink">{item.referencia || "Sem referência"}</p>
+                      <p className="mt-1 text-muted">Processo {item.processo}</p>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full table-fixed border-collapse text-left text-sm">
+              <colgroup>
+                <col className="w-[7.5rem]" />
+                <col />
+                <col className="w-[8.5rem]" />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-line text-muted">
+                  <th className="py-2 pr-3 font-medium">Número</th>
+                  <th className="py-2 pr-3 font-medium">Referência</th>
+                  <th className="py-2 font-medium">Processo</th>
+                </tr>
+              </thead>
+              {visiveis.map((grupo) => (
+                <tbody key={grupo.origem}>
+                  <tr>
+                    <td colSpan={3} className="pt-4 pb-1 font-medium text-ink">
+                      {grupo.origem}
+                    </td>
+                  </tr>
+                  {grupo.itens.map((item) => (
+                    <tr key={`${grupo.origem}-${item.ano}-${item.numero}-${item.processo}`} className="border-b border-line">
+                      <td className="py-2 pr-3 font-medium text-ink">{formatarPeca(item.numero, item.ano)}</td>
+                      <td className="py-2 pr-3 text-ink">{item.referencia || "Sem referência"}</td>
+                      <td className="py-2 text-ink">{item.processo}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              ))}
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1636,28 +2078,37 @@ function RelatorioPecas({
       </div>
       {relatorio && (
         <article className="relatorio-folha rounded-2xl border border-line bg-sheet p-4 md:p-6">
+                <Timbrado />
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-sm font-medium text-pine">Processos administrativos</p>
-              <h2 className="font-display text-3xl text-ink">Comunicações internas e pareceres</h2>
+              <h2 className="font-display text-2xl text-ink sm:text-3xl">Comunicações internas e pareceres</h2>
               <p className="mt-1 text-sm text-muted">
                 {relatorio.rotulo} · {relatorio.itens.length}{" "}
                 {relatorio.itens.length === 1 ? "processo" : "processos"}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={(evento) => imprimirRelatorio(evento.currentTarget)}
-              className="no-print inline-flex h-11 items-center gap-2 rounded-xl border border-line px-4 text-sm font-medium text-ink"
-            >
-              <Printer className="size-4" />
-              Imprimir ou salvar PDF
-            </button>
+            <BotaoRelatorio />
           </div>
           {relatorio.itens.length === 0 ? (
             <p className="mt-4 text-sm text-muted">Nenhuma comunicação interna ou parecer neste recorte.</p>
           ) : (
-            <div className="mt-4">
+            <>
+            <ul className="relatorio-cards mt-4 flex flex-col gap-3 md:hidden">
+              {relatorio.itens.map((item) => (
+                <li key={item.id} className="rounded-xl border border-line bg-paper p-3 text-sm">
+                  <p className="font-medium text-ink">{rotuloNumero(item.numero, item.numeroAno)}</p>
+                  <p className="mt-1 text-ink">{item.referencia || "Sem referência"}</p>
+                  <p className="mt-2 text-muted">Comunicação interna</p>
+                  <p className="text-ink">{formatarPeca(item.ciNumero, item.ciAno)}</p>
+                  <p className="mt-2 text-muted">Origem</p>
+                  <p className="break-words text-ink">{item.ciOrigem || "—"}</p>
+                  <p className="mt-2 text-muted">Parecer</p>
+                  <p className="text-ink">{formatarPeca(item.parecerNumero, item.parecerAno)}</p>
+                </li>
+              ))}
+            </ul>
+            <div className="relatorio-tabela-wrap mt-4 hidden md:block">
               <table className="relatorio-tabela w-full border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-line text-xs text-muted">
@@ -1681,10 +2132,138 @@ function RelatorioPecas({
                 </tbody>
               </table>
             </div>
+            </>
           )}
+          <TimbradoRodape />
         </article>
       )}
     </>
+  );
+}
+
+function CamposLinks({ form, onChange }: { form: FormAdmin; onChange: (form: FormAdmin) => void }) {
+  const obrigatorio = exigeLinks(form.tipo);
+  return (
+    <>
+      <Campo label="Link de publicação">
+        <input
+          type="url"
+          inputMode="url"
+          value={form.linkAbertura}
+          onChange={(e) => onChange({ ...form, linkAbertura: e.target.value })}
+          className={inputCls}
+          placeholder="https://"
+          required={obrigatorio}
+        />
+      </Campo>
+      <Campo label="Houve retificação?">
+        <select
+          value={form.houveRetificacao ? "sim" : "nao"}
+          onChange={(e) => {
+            const sim = e.target.value === "sim";
+            onChange({ ...form, houveRetificacao: sim, linkRetificacao: sim ? form.linkRetificacao : "" });
+          }}
+          className={inputCls}
+        >
+          <option value="nao">Não</option>
+          <option value="sim">Sim</option>
+        </select>
+      </Campo>
+      {form.houveRetificacao && (
+        <Campo label="Link da retificação">
+          <input
+            type="url"
+            inputMode="url"
+            value={form.linkRetificacao}
+            onChange={(e) => onChange({ ...form, linkRetificacao: e.target.value })}
+            className={inputCls}
+            placeholder="https://"
+            required
+          />
+        </Campo>
+      )}
+      <Campo label="Link de homologação">
+        <input
+          type="url"
+          inputMode="url"
+          value={form.linkHomologacao}
+          onChange={(e) => onChange({ ...form, linkHomologacao: e.target.value })}
+          className={inputCls}
+          placeholder="https://"
+        />
+      </Campo>
+      <Campo label="Link do PNCP">
+        <input
+          type="url"
+          inputMode="url"
+          value={form.linkPncp}
+          onChange={(e) => onChange({ ...form, linkPncp: e.target.value })}
+          className={inputCls}
+          placeholder="https://"
+        />
+      </Campo>
+      {form.status === "cancelado" && (
+        <Campo label="Link de cancelamento">
+          <input
+            type="url"
+            inputMode="url"
+            value={form.linkCancelamento}
+            onChange={(e) => onChange({ ...form, linkCancelamento: e.target.value })}
+            className={inputCls}
+            placeholder="https://"
+            required
+          />
+        </Campo>
+      )}
+    </>
+  );
+}
+
+function BotaoLink({ href, texto, children }: { href: string; texto: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex h-11 items-center gap-2 rounded-xl border border-line bg-paper px-3 text-sm font-medium text-ink"
+    >
+      {children}
+      {texto}
+    </a>
+  );
+}
+
+function BandeiraBrasil() {
+  return (
+    <svg viewBox="0 0 20 14" className="h-3.5 w-5 shrink-0 rounded-[2px]" aria-hidden>
+      <rect width="20" height="14" fill="#009b3a" />
+      <polygon points="10,1.2 18.6,7 10,12.8 1.4,7" fill="#fedf00" />
+      <circle cx="10" cy="7" r="2.7" fill="#002776" />
+    </svg>
+  );
+}
+
+function CartaoProcesso({ item }: { item: ProcessoAdmin }) {
+  const marco = marcoAdmin(item);
+  return (
+    <li className="rounded-xl border border-line bg-paper p-3 text-sm">
+      <div className="flex items-start justify-between gap-3">
+        <p className="font-medium text-ink">{rotuloNumero(item.numero, item.numeroAno)}</p>
+        <p className="shrink-0 text-right text-ink">
+          {item.valorTotalCentavos != null ? formatarReais(item.valorTotalCentavos) : item.valorEstimadoCentavos != null ? `${formatarReais(item.valorEstimadoCentavos)} estimado` : "—"}
+        </p>
+      </div>
+      <p className="mt-1 break-words text-pine">{rotuloTipo(item.tipo, item.tipoNumero, item.tipoAno)}</p>
+      <p className="mt-1 break-words text-ink">{item.referencia || "Sem referência"}</p>
+      <p className="mt-1 text-muted">
+        {statusAdminLabel(item.status)}
+        {marco.data ? ` · ${formatDate(marco.data)}` : ""}
+      </p>
+      <p className="mt-1 break-words text-ink">
+        {item.possuiContrato ? item.contratado || "Contrato" : "Sem contrato"}
+        {item.valorMensalCentavos != null ? ` · ${formatarReais(item.valorMensalCentavos)} / mês` : ""}
+      </p>
+    </li>
   );
 }
 
@@ -1736,18 +2315,18 @@ function PecaCampos({
   );
 }
 
-function Info({ rotulo, valor, largo }: { rotulo: string; valor: string; largo?: boolean }) {
+function Info({ rotulo, valor, largo, justificar }: { rotulo: string; valor: string; largo?: boolean; justificar?: boolean }) {
   return (
     <div className={largo ? "col-span-2" : undefined}>
       <dt className="text-xs text-muted">{rotulo}</dt>
-      <dd className="text-ink">{valor}</dd>
+      <dd className={justificar ? "text-justify text-ink" : "text-ink"}>{valor}</dd>
     </div>
   );
 }
 
 function Campo({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+    <label className="flex min-w-0 max-w-full flex-col gap-1 text-sm font-medium text-ink">
       {label}
       {children}
     </label>

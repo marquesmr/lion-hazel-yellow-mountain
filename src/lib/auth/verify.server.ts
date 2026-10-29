@@ -93,5 +93,7 @@ export async function requireUserId(bearerToken?: string): Promise<string> {
   }
   const user = await getSessionUser(bearerToken);
   if (!user) throw new UnauthorizedError();
+  const { barrarSePreciso } = await import("../gestao.server");
+  await barrarSePreciso(user.id);
   return user.id;
 }

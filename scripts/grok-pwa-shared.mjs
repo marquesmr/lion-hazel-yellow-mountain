@@ -7,7 +7,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const DEFAULT_APP_NAME = "Grok App";
-export const INSTALL_APP_NAME = "Auxilia Legis";
 export const OG_SERVICE_URL_DEFAULT = "https://og.grok.me";
 export const OG_SITE_REL_PATH = "src/lib/og/site.json";
 
@@ -159,8 +158,7 @@ export function renderInstallPageHtml(template, { host, url } = {}) {
 }
 
 export function renderWebManifest(hostHeader) {
-  void hostHeader;
-  const name = INSTALL_APP_NAME;
+  const name = appNameFromHost(hostHeader);
   return JSON.stringify(
     {
       name,

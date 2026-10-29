@@ -1,0 +1,38 @@
+{
+  "url": "http://127.0.0.1:8080/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "Controle de Prazos",
+      "hasCanvas": false,
+      "bodyTextLen": 33,
+      "bodyTextHash": "50dea234aef4bf331ab4b99e041947eb2b3fa8b1a31f4cc01442865eb0695174",
+      "bodyTextPrefix": "Estamos preparando tudo para você",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/legislativo-preview.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "Controle de Prazos",
+      "hasCanvas": false,
+      "bodyTextLen": 237,
+      "bodyTextHash": "c6fa106b2f1fc0c84caf12863903a4f892d36af99624abbf224f872fe7e24f25",
+      "bodyTextPrefix": "Assistente do Poder Legislativo Crie uma conta para lançar proce",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/legislativo-preview-mobile.png"
+    }
+  },
+  "brandWarnings": [
+    "BRAND NOTE: no custom public/og.jpg — the platform will serve the og.grok.me placeholder. Custom cards are the default for games of every kind (DOM board/word games included), whimsical apps, creative tools, and brand-forward pages — only plain utilities (converters, CRUD trackers, admin dashboards) keep the placeholder. If this app is not a plain utility, finish the brand-asset pass per /workspace/.grok/skills/og/SKILL.md."
+  ],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/legislativo-preview.json"
+}

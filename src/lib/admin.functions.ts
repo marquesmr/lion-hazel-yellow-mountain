@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getSql } from "@/lib/db";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { modoValor, normalizarModalidade, normalizarStatus, pedePrevisao, type ProcessoAdmin } from "@/lib/admin";
+import { exigeLinks, modoValor, normalizarLink, normalizarModalidade, normalizarStatus, pedePrevisao, tipoSimples, type ProcessoAdmin } from "@/lib/admin";
 import { todayIso, type Andamento } from "@/lib/prazos";
 
 function dataOk(value: unknown): value is string {
@@ -28,9 +28,21 @@ function historicoOk(value: unknown): Andamento[] {
         em: typeof nota.em === "string" ? nota.em.slice(0, 40) : new Date().toISOString(),
         texto: texto.slice(0, 2000),
         autorNome: typeof nota.autorNome === "string" ? nota.autorNome.trim().slice(0, 80) : "",
+        ...(typeof nota.link === "string" && normalizarLink(nota.link) ? { link: normalizarLink(nota.link)!.slice(0, 500) } : {}),
       },
     ];
   });
+}
+
+function linkCampo(value: unknown, nome: string, obrigatorio: boolean): string {
+  const texto = typeof value === "string" ? value.trim() : "";
+  if (!texto) {
+    if (obrigatorio) throw new Error(`Informe o ${nome}.`);
+    return "";
+  }
+  const url = normalizarLink(texto);
+  if (!url) throw new Error(`O ${nome} está inválido.`);
+  return url.slice(0, 500);
 }
 
 function centavosOk(value: unknown): number | null {
@@ -73,7 +85,7 @@ function exigirAdmin(input: unknown): ProcessoAdmin {
   const numeroAno = anoOpcional(bruto.numeroAno);
   const tipo = normalizarModalidade(String(bruto.tipo));
   if (!tipo) throw new Error("Tipo inválido");
-  const simples = tipo === "Outros" || tipo === "Doação";
+  const simples = tipoSimples(tipo);
   if (!numero) throw new Error("Informe o número do processo.");
   const tipoPeca = pecaOpcional(bruto.tipoNumero, bruto.tipoAno, "tipo");
   const status = normalizarStatus(String(bruto.status ?? ""));
@@ -94,6 +106,11 @@ function exigirAdmin(input: unknown): ProcessoAdmin {
   const ci = pecaOpcional(bruto.ciNumero, bruto.ciAno, "comunicação interna");
   const parecer = pecaOpcional(bruto.parecerNumero, bruto.parecerAno, "parecer");
   const ciOrigem = typeof bruto.ciOrigem === "string" ? bruto.ciOrigem.trim() : "";
+  const linkAbertura = linkCampo(bruto.linkAbertura, "link de publicação", exigeLinks(tipo));
+  const linkHomologacao = linkCampo(bruto.linkHomologacao, "link de homologação", false);
+  const linkPncp = linkCampo(bruto.linkPncp, "link do PNCP", false);
+  const linkRetificacao = bruto.linkRetificacao ? linkCampo(bruto.linkRetificacao, "link da retificação", true) : "";
+  const linkCancelamento = linkCampo(bruto.linkCancelamento, "link de cancelamento", status === "cancelado");
   if (tipo !== "Outros" && tipoPeca.numero == null) throw new Error("Informe o número do tipo.");
   if (ci.numero == null) throw new Error("Informe o número da comunicação interna.");
   if (!ciOrigem) throw new Error("Informe de onde veio a comunicação interna.");
@@ -149,6 +166,11 @@ function exigirAdmin(input: unknown): ProcessoAdmin {
     ciNumero: ci.numero,
     ciAno: ci.ano,
     ciOrigem: ciOrigem.slice(0, 160),
+    linkAbertura,
+    linkHomologacao,
+    linkPncp,
+    linkRetificacao,
+    linkCancelamento,
     parecerNumero: simples || status === "cancelado" ? null : parecer.numero,
     parecerAno: simples || status === "cancelado" ? null : parecer.ano,
     status,
@@ -183,6 +205,11 @@ type Linha = {
   ci_numero: number | null;
   ci_ano: number | null;
   ci_origem: string | null;
+  link_abertura: string | null;
+  link_homologacao: string | null;
+  link_pncp: string | null;
+  link_retificacao: string | null;
+  link_cancelamento: string | null;
   parecer_numero: number | null;
   parecer_ano: number | null;
   status: string;
@@ -243,6 +270,11 @@ function linhaParaAdmin(linha: Linha): ProcessoAdmin {
     ciNumero: inteiroOuNulo(linha.ci_numero),
     ciAno: inteiroOuNulo(linha.ci_ano),
     ciOrigem: linha.ci_origem ?? "",
+    linkAbertura: linha.link_abertura ?? "",
+    linkHomologacao: linha.link_homologacao ?? "",
+    linkPncp: linha.link_pncp ?? "",
+    linkRetificacao: linha.link_retificacao ?? "",
+    linkCancelamento: linha.link_cancelamento ?? "",
     parecerNumero: inteiroOuNulo(linha.parecer_numero),
     parecerAno: inteiroOuNulo(linha.parecer_ano),
     status,
@@ -254,7 +286,7 @@ function linhaParaAdmin(linha: Linha): ProcessoAdmin {
 }
 
 let schemaPronto: { versao: number; pendente: Promise<void> } | null = null;
-const SCHEMA_ADMIN = 4;
+const SCHEMA_ADMIN = 8;
 
 /** Garante as colunas novas mesmo se a migração ainda não tiver rodado nesta instância. */
 async function garantirColunas(sql: Awaited<ReturnType<typeof getSql>>) {
@@ -271,6 +303,12 @@ async function garantirColunas(sql: Awaited<ReturnType<typeof getSql>>) {
         "alter table processos_admin add column if not exists tipo_ano integer",
         "alter table processos_admin add column if not exists previsao_etapa date",
         "alter table processos_admin add column if not exists valor_estimado_centavos integer",
+        "alter table processos_admin add column if not exists link_abertura text not null default ''",
+        "alter table processos_admin add column if not exists link_homologacao text not null default ''",
+        "alter table processos_admin add column if not exists link_pncp text not null default ''",
+        "alter table processos_admin add column if not exists link_retificacao text not null default ''",
+        "alter table processos_admin add column if not exists link_cancelamento text not null default ''",
+        "alter table processos_admin add column if not exists em_manutencao boolean not null default false",
       ];
       for (const comando of comandos) await sql.query(comando);
     })().catch((err) => {
@@ -286,7 +324,7 @@ const SELECT_ADMIN = `
   p.id, p.numero, p.numero_ano, p.referencia, p.objeto, p.tipo, p.tipo_numero, p.tipo_ano, p.data_inicio, p.previsao_etapa, p.encerramento,
   p.alerta_dias, p.possui_contrato, p.vigencia_inicio, p.vigencia_fim, p.contratado,
   p.documento, p.valor_total_centavos, p.valor_mensal_centavos, p.valor_estimado_centavos,
-  p.ci_numero, p.ci_ano, p.ci_origem, p.parecer_numero, p.parecer_ano,
+  p.ci_numero, p.ci_ano, p.ci_origem, p.link_abertura, p.link_homologacao, p.link_pncp, p.link_retificacao, p.link_cancelamento, p.parecer_numero, p.parecer_ano,
   p.status, p.historico, p.team_id,
   coalesce(nullif(p.autor_id, ''), p.user_id) as autor_id,
   coalesce(nullif(p.autor_nome, ''), u.name, '') as autor_nome
@@ -334,6 +372,9 @@ export const salvarAdmin = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const sql = await getSql();
     await garantirColunas(sql);
+    const { conferirAba, anotarUso, exigirEscrita } = await import("./gestao.server");
+    await exigirEscrita(context.userId);
+    await conferirAba("administrativo", data.tipo);
     const eu = await sql<{ name: string | null }>`select name from "user" where id = ${context.userId}`;
     const autorNome = (eu[0]?.name || "Sem nome").trim().slice(0, 80) || "Sem nome";
     if (data.equipeId) {
@@ -371,6 +412,10 @@ export const salvarAdmin = createServerFn({ method: "POST" })
       if (!permitido) throw new Error("Não foi possível salvar");
     }
     const historicoJson = JSON.stringify(historico);
+    const emManutencao = await sql<{ manutencao: boolean }>`
+      select manutencao from gestao_config where id = 'principal'
+    `;
+    const lancadoNaManutencao = !existente.length && Boolean(emManutencao[0]?.manutencao);
     const salvos = existente.length
       ? await sql<{ id: string }>`
           update processos_admin set
@@ -396,6 +441,11 @@ export const salvarAdmin = createServerFn({ method: "POST" })
             ci_numero = ${data.ciNumero},
             ci_ano = ${data.ciAno},
             ci_origem = ${data.ciOrigem},
+            link_abertura = ${data.linkAbertura},
+            link_homologacao = ${data.linkHomologacao},
+            link_pncp = ${data.linkPncp},
+            link_retificacao = ${data.linkRetificacao},
+            link_cancelamento = ${data.linkCancelamento},
             parecer_numero = ${data.parecerNumero},
             parecer_ano = ${data.parecerAno},
             status = ${data.status},
@@ -412,19 +462,21 @@ export const salvarAdmin = createServerFn({ method: "POST" })
             id, user_id, team_id, numero, numero_ano, referencia, objeto, tipo, tipo_numero, tipo_ano, data_inicio, previsao_etapa, encerramento,
             alerta_dias, possui_contrato, vigencia_inicio, vigencia_fim, contratado, documento,
             valor_total_centavos, valor_mensal_centavos, valor_estimado_centavos, ci_numero, ci_ano, ci_origem,
-            parecer_numero, parecer_ano, status, historico, autor_id, autor_nome
+            link_abertura, link_homologacao, link_pncp, link_retificacao, link_cancelamento,
+            parecer_numero, parecer_ano, status, historico, autor_id, autor_nome, em_manutencao
           ) values (
             ${data.id}, ${context.userId}, ${data.equipeId}, ${data.numero}, ${data.numeroAno}, ${data.referencia},
             ${data.objeto}, ${data.tipo}, ${data.tipoNumero}, ${data.tipoAno}, ${data.dataInicio}, ${data.previsaoEtapa}, ${data.encerramento}, ${data.alertaDias},
             ${data.possuiContrato}, ${data.vigenciaInicio}, ${data.vigenciaFim}, ${data.contratado},
             ${data.documento}, ${data.valorTotalCentavos}, ${data.valorMensalCentavos}, ${data.valorEstimadoCentavos},
-            ${data.ciNumero}, ${data.ciAno}, ${data.ciOrigem}, ${data.parecerNumero}, ${data.parecerAno},
+            ${data.ciNumero}, ${data.ciAno}, ${data.ciOrigem}, ${data.linkAbertura}, ${data.linkHomologacao}, ${data.linkPncp}, ${data.linkRetificacao}, ${data.linkCancelamento}, ${data.parecerNumero}, ${data.parecerAno},
             ${data.status},
-            ${historicoJson}, ${context.userId}, ${autorNome}
+            ${historicoJson}, ${context.userId}, ${autorNome}, ${lancadoNaManutencao}
           )
           returning id
         `;
     if (!salvos.length) throw new Error("Não foi possível salvar");
+    void anotarUso(context.userId, existente.length ? "Alterou processo administrativo" : "Lançou processo administrativo", `${data.numero} · ${data.tipo}`).catch(() => undefined);
     return { id: salvos[0].id };
   });
 
@@ -436,6 +488,8 @@ export const apagarAdmin = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .handler(async ({ context, data: id }) => {
     const sql = await getSql();
+    const { anotarUso, exigirEscrita } = await import("./gestao.server");
+    await exigirEscrita(context.userId);
     await sql`
       delete from processos_admin
       where id = ${id}
@@ -444,6 +498,7 @@ export const apagarAdmin = createServerFn({ method: "POST" })
           or team_id in (select equipe_id from equipe_membros where user_id = ${context.userId})
         )
     `;
+    void anotarUso(context.userId, "Excluiu processo administrativo", id).catch(() => undefined);
     return { id };
   });
 
@@ -466,6 +521,8 @@ export const moverAdmin = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const sql = await getSql();
     await garantirColunas(sql);
+    const { exigirEscrita } = await import("./gestao.server");
+    await exigirEscrita(context.userId);
     if (data.equipeId) {
       const membro = await sql<{ ok: number }>`
         select 1 as ok from equipe_membros where equipe_id = ${data.equipeId} and user_id = ${context.userId}

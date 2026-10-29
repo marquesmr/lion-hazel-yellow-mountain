@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getSql } from "@/lib/db";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { TIPOS, TIPOS_LEI, type AlcanceVeto, type Andamento, type Processo, type RetornoLegislativo, type StatusProcesso, type TipoLei, type TipoProcesso } from "@/lib/prazos";
+import { TIPOS_LEI, type AlcanceVeto, type Andamento, type Processo, type RetornoLegislativo, type StatusProcesso, type TipoLei, type TipoProcesso } from "@/lib/prazos";
 
 function exigirProcesso(input: unknown): Processo {
   if (!input || typeof input !== "object") throw new Error("Dados inválidos");
@@ -11,7 +11,8 @@ function exigirProcesso(input: unknown): Processo {
   const assunto = typeof bruto.assunto === "string" ? bruto.assunto.trim() : "";
   const id = typeof bruto.id === "string" ? bruto.id.trim() : "";
   if (!id || !numero || !parte || !assunto) throw new Error("Dados inválidos");
-  if (!(TIPOS as readonly string[]).includes(String(bruto.tipo))) throw new Error("Tipo inválido");
+  const tipo = typeof bruto.tipo === "string" ? bruto.tipo.trim().replace(/\s+/g, " ") : "";
+  if (!/^[\p{L}\p{N}][\p{L}\p{N} .\/'-]{1,39}$/u.test(tipo)) throw new Error("Tipo inválido");
   if (bruto.status !== "andamento" && bruto.status !== "concluido") throw new Error("Status inválido");
   if (!dataOk(bruto.dataLancamento) || !dataOk(bruto.prazo)) throw new Error("Data inválida");
   const alerta = Number(bruto.alertaDias);
@@ -36,7 +37,7 @@ function exigirProcesso(input: unknown): Processo {
     numero: numero.slice(0, 80),
     parte: parte.slice(0, 160),
     assunto: assunto.slice(0, 240),
-    tipo: bruto.tipo as TipoProcesso,
+    tipo: tipo as TipoProcesso,
     dataLancamento: bruto.dataLancamento as string,
     prazo: bruto.prazo as string,
     alertaDias: alerta,
@@ -113,6 +114,7 @@ async function garantirColunas(sql: Awaited<ReturnType<typeof getSql>>) {
         "alter table processos add column if not exists lei_numero integer",
         "alter table processos add column if not exists lei_ano integer",
         "alter table processos add column if not exists apreciacao_prazo date",
+        "alter table processos add column if not exists em_manutencao boolean not null default false",
       ];
       for (const comando of comandos) await sql.query(comando);
     })().catch((err) => {
@@ -145,6 +147,7 @@ function historicoOk(value: unknown): Andamento[] {
         em: typeof nota.em === "string" ? nota.em.slice(0, 40) : new Date().toISOString(),
         texto: texto.slice(0, 2000),
         autorNome: typeof nota.autorNome === "string" ? nota.autorNome.trim().slice(0, 80) : "",
+        ...(typeof nota.link === "string" && /^https?:\/\//i.test(nota.link.trim()) ? { link: nota.link.trim().slice(0, 500) } : {}),
       },
     ];
   });
@@ -179,7 +182,7 @@ function linhaParaProcesso(linha: Linha): Processo {
   } catch {
     historico = [];
   }
-  const tipo = (TIPOS as readonly string[]).includes(linha.tipo) ? (linha.tipo as TipoProcesso) : "Outros";
+  const tipo = typeof linha.tipo === "string" && linha.tipo.trim() ? (linha.tipo as TipoProcesso) : "Outros";
   const status: StatusProcesso = linha.status === "concluido" ? "concluido" : "andamento";
   return {
     id: linha.id,
@@ -246,6 +249,9 @@ export const salvarProcesso = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const sql = await getSql();
     await garantirColunas(sql);
+    const { conferirAba, anotarUso, exigirEscrita } = await import("./gestao.server");
+    await exigirEscrita(context.userId);
+    await conferirAba("legislativo", data.tipo);
     const eu = await sql<{ name: string | null }>`select name from "user" where id = ${context.userId}`;
     const autorNome = (eu[0]?.name || "Sem nome").trim().slice(0, 80) || "Sem nome";
     if (data.equipeId) {
@@ -283,6 +289,10 @@ export const salvarProcesso = createServerFn({ method: "POST" })
       if (!permitido) throw new Error("Não foi possível salvar");
     }
     const historicoJson = JSON.stringify(historico);
+    const emManutencao = await sql<{ manutencao: boolean }>`
+      select manutencao from gestao_config where id = 'principal'
+    `;
+    const lancadoNaManutencao = !existente.length && Boolean(emManutencao[0]?.manutencao);
     const salvos = existente.length
       ? await sql<{ id: string }>`
           update processos set
@@ -311,16 +321,18 @@ export const salvarProcesso = createServerFn({ method: "POST" })
       : await sql<{ id: string }>`
           insert into processos (
             id, user_id, numero, parte, assunto, tipo, data_lancamento, prazo, alerta_dias, status, historico, team_id, autor_id, autor_nome,
-            retorno, veto_alcance, lei_tipo, lei_numero, lei_ano, apreciacao_prazo
+            retorno, veto_alcance, lei_tipo, lei_numero, lei_ano, apreciacao_prazo, em_manutencao
           ) values (
             ${data.id}, ${context.userId}, ${data.numero}, ${data.parte}, ${data.assunto}, ${data.tipo},
             ${data.dataLancamento}, ${data.prazo}, ${data.alertaDias}, ${data.status}, ${historicoJson},
             ${data.equipeId}, ${context.userId}, ${autorNome},
-            ${data.retorno}, ${data.vetoAlcance}, ${data.leiTipo}, ${data.leiNumero}, ${data.leiAno}, ${data.apreciacaoPrazo}
+            ${data.retorno}, ${data.vetoAlcance}, ${data.leiTipo}, ${data.leiNumero}, ${data.leiAno}, ${data.apreciacaoPrazo},
+            ${lancadoNaManutencao}
           )
           returning id
         `;
     if (!salvos.length) throw new Error("Não foi possível salvar");
+    void anotarUso(context.userId, existente.length ? "Alterou processo legislativo" : "Lançou processo legislativo", `${data.numero} · ${data.tipo}`).catch(() => undefined);
     return { id: salvos[0].id };
   });
 
@@ -332,6 +344,8 @@ export const apagarProcesso = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .handler(async ({ context, data: id }) => {
     const sql = await getSql();
+    const { anotarUso, exigirEscrita } = await import("./gestao.server");
+    await exigirEscrita(context.userId);
     await sql`
       delete from processos
       where id = ${id}
@@ -340,6 +354,7 @@ export const apagarProcesso = createServerFn({ method: "POST" })
           or team_id in (select equipe_id from equipe_membros where user_id = ${context.userId})
         )
     `;
+    void anotarUso(context.userId, "Excluiu processo legislativo", id).catch(() => undefined);
     return { id };
   });
 
@@ -361,6 +376,8 @@ export const moverProcesso = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .handler(async ({ context, data }) => {
     const sql = await getSql();
+    const { exigirEscrita } = await import("./gestao.server");
+    await exigirEscrita(context.userId);
     if (data.equipeId) {
       const membro = await sql<{ ok: number }>`
         select 1 as ok from equipe_membros where equipe_id = ${data.equipeId} and user_id = ${context.userId}

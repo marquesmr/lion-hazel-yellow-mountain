@@ -2,7 +2,7 @@ import { i as __require, o as __toESM, t as __commonJSMin } from "../../_runtime
 import { n as require_react } from "../@radix-ui/react-compose-refs+[...].mjs";
 import { i as parseHref, r as normalizeProtocolRelative } from "../tanstack__history.mjs";
 import { n as require_jsx_runtime } from "../radix-ui__react-context+react.mjs";
-import { c as require_react_dom } from "../@radix-ui/react-dialog+[...].mjs";
+import { l as require_react_dom } from "../@radix-ui/react-dialog+[...].mjs";
 import { PassThrough, Readable } from "node:stream";
 //#region node_modules/@tanstack/router-core/dist/esm/not-found.js
 /** Determine if a value is a TanStack Router not-found error. */

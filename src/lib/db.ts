@@ -69,19 +69,46 @@ const identity = (v: string) => v;
 
 type Run = <T>(text: string, params: unknown[]) => Promise<T[]>;
 
+type Trafego = { consultas: number; bytesIda: number; bytesVolta: number; desde: number };
+
+function somarTrafego(ida: number, volta: number) {
+  const caixa = globalThis as typeof globalThis & { __appTrafego__?: Trafego };
+  const atual = (caixa.__appTrafego__ ??= { consultas: 0, bytesIda: 0, bytesVolta: 0, desde: Date.now() });
+  atual.consultas += 1;
+  atual.bytesIda += ida;
+  atual.bytesVolta += volta;
+}
+
+export function lerTrafego(): Trafego {
+  const caixa = globalThis as typeof globalThis & { __appTrafego__?: Trafego };
+  return { ...(caixa.__appTrafego__ ?? { consultas: 0, bytesIda: 0, bytesVolta: 0, desde: Date.now() }) };
+}
+
 /** Wrap a query runner in the tagged-template + `.query()` `Sql` surface. */
 function toSql(run: Run): Sql {
+  const medido: Run = async <T>(text: string, params: unknown[]) => {
+    const ida =
+      Buffer.byteLength(text) +
+      params.reduce((total: number, valor) => total + Buffer.byteLength(valor == null ? "" : String(valor)), 0);
+    const rows = await run<T>(text, params);
+    let volta = 0;
+    try {
+      volta = Buffer.byteLength(JSON.stringify(rows));
+    } catch {
+      volta = 0;
+    }
+    somarTrafego(ida, volta);
+    return rows;
+  };
   const sql = (async <T = Record<string, unknown>>(
     strings: TemplateStringsArray,
     ...values: unknown[]
   ): Promise<T[]> => {
-    // Rebuild with $1, $2, … placeholders so values stay parameterized.
     let text = strings[0];
     for (let i = 0; i < values.length; i += 1) text += `$${i + 1}${strings[i + 1]}`;
-    return run<T>(text, values);
+    return medido<T>(text, values);
   }) as unknown as Sql;
-  sql.query = <T = Record<string, unknown>>(text: string, params: unknown[] = []) =>
-    run<T>(text, params);
+  sql.query = <T = Record<string, unknown>>(text: string, params: unknown[] = []) => medido<T>(text, params);
   return sql;
 }
 

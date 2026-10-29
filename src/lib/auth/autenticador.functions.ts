@@ -26,10 +26,49 @@ export const estadoAutenticador = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .handler(async ({ context }) => {
     const sql = await getSql();
-    const linhas = await sql<{ confirmado: boolean }>`
-      select confirmado from autenticador where user_id = ${context.userId}
+    const linhas = await sql<{ confirmado: boolean; obrigatorio: boolean }>`
+      select confirmado, obrigatorio from autenticador where user_id = ${context.userId}
     `;
-    return { ativo: linhas[0]?.confirmado === true };
+    return { ativo: linhas[0]?.confirmado === true, obrigatorio: linhas[0]?.obrigatorio === true };
+  });
+
+export const marcarAutenticadorObrigatorio = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    const sql = await getSql();
+    await sql`
+      insert into autenticador (user_id, segredo, confirmado, obrigatorio)
+      values (${context.userId}, '', false, true)
+      on conflict (user_id) do update
+      set obrigatorio = true, atualizado_em = now()
+    `;
+    return { ok: true };
+  });
+
+export const registrarAceiteTermo = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    const sql = await getSql();
+    await sql`
+      insert into termo_aceite (user_id, versao)
+      values (${context.userId}, '2026-10-29')
+      on conflict (user_id) do update set versao = excluded.versao, aceito_em = now()
+    `;
+    return { ok: true };
+  });
+
+export const dispensarAutenticador = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    const sql = await getSql();
+    await sql`
+      insert into autenticador (user_id, segredo, confirmado, obrigatorio)
+      values (${context.userId}, '', false, false)
+      on conflict (user_id) do update
+      set obrigatorio = false, atualizado_em = now()
+      where autenticador.confirmado = false
+    `;
+    return { ok: true };
   });
 
 export const iniciarAutenticador = createServerFn({ method: "POST" })

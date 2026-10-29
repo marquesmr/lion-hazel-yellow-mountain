@@ -1,11 +1,14 @@
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
+  Archive,
   Bell,
   BellOff,
   BarChart3,
   CalendarClock,
   Check,
+  FileText,
   Pencil,
   Plus,
   RotateCcw,
@@ -13,12 +16,14 @@ import {
   Trash2,
   Users,
   X,
+  Ellipsis,
 } from "lucide-react";
 import {
   type Andamento,
   type Processo,
   type TipoProcesso,
   TIPOS_LEI,
+  TIPOS,
   type AlcanceVeto,
   type RetornoLegislativo,
   type TipoLei,
@@ -27,31 +32,49 @@ import {
   avisosJaEnviados,
   daysUntil,
   formatDate,
+  juntarNumero,
   lerProcessosLocais,
   marcarAvisos,
+  numeroComAno,
   ordenar,
   prazoLabel,
   precisaAviso,
+  rotuloRetorno,
+  rotuloResposta,
+  separarNumero,
   todayIso,
+  definirSemExpediente,
   urgencia,
   type Urgencia,
 } from "@/lib/prazos";
+import { CarregandoTemis } from "@/components/carregando-temis";
 import { UserButton } from "@/lib/auth/gates";
 import { authClient } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { apagarProcesso, listarProcessos, moverProcesso, salvarProcesso } from "@/lib/processos.functions";
 import { SoltarProcessoContext } from "@/components/soltar-processo";
-import { adicionarNaEquipe, criarEquipe, listarEquipes, removerDaEquipe, type Equipe } from "@/lib/equipes.functions";
+import { adicionarNaEquipe, criarEquipe, listarEquipes, removerDaEquipe, renomearEquipe, type Equipe } from "@/lib/equipes.functions";
 import { TelaConta } from "@/components/tela-conta";
-import { AutenticadorPerfil } from "@/components/autenticador";
+import { AutenticadorPerfil, CadastroAutenticador, useExigirAutenticador } from "@/components/autenticador";
 import { TrocaSenhaPerfil } from "@/components/troca-senha";
+import { Timbrado, TimbradoRodape } from "@/components/timbrado";
 import { PainelEstatisticas } from "@/components/estatisticas";
+import { intervaloPeriodo, type PeriodoRelatorio } from "@/lib/admin";
 import { AdminPainel } from "@/components/admin-painel";
+import { AjudaFlutuante } from "@/components/ajuda-flutuante";
+import { CampoMes } from "@/components/campo-mes";
+import { BotaoRelatorio } from "@/components/botao-relatorio";
+import { listarAbas, marcarPresenca, estadoSistema, consultarExclusao, abrirGestaoPelaConta } from "@/lib/gestao.functions";
+import { AvisoContaExcluida } from "@/components/aviso-exclusao";
+import { signOut } from "@/lib/auth/client";
+import { BotaoConfiguracoes } from "@/components/configuracoes";
+import { assumirTemaDaConta, lerPreferencias } from "@/lib/preferencias";
 
 type Filtro = "abertos" | "atencao" | "vencidos" | "prazo" | "concluidos" | "todos";
 
 type FormState = {
   numero: string;
+  numeroAno: number;
   parte: string;
   assunto: string;
   tipo: TipoProcesso;
@@ -66,22 +89,16 @@ const FILTROS: { id: Filtro; label: string }[] = [
   { id: "atencao", label: "Atenção" },
   { id: "vencidos", label: "Vencidos" },
   { id: "prazo", label: "No prazo" },
-  { id: "concluidos", label: "Concluídos" },
+  { id: "concluidos", label: "Arquivados" },
   { id: "todos", label: "Todos" },
 ];
 
 const ALERTA_OPCOES = [1, 2, 3, 5, 7, 10, 15, 30];
 
-const ABAS_TIPO: { id: TipoProcesso | "todos"; label: string }[] = [
-  { id: "todos", label: "Todos" },
-  { id: "Requerimentos", label: "Requerimentos" },
-  { id: "Indicações", label: "Indicações" },
-  { id: "Projetos de Lei", label: "Projetos de Lei" },
-  { id: "Outros", label: "Outros" },
-];
+const ABAS_FIXAS = ["Requerimentos", "Indicações", "Projetos de Lei", "Outros"];
 
 type OrdemCampo = "numero" | "tipo" | "prazo";
-type Guia = "lista" | "estatisticas";
+type Guia = "lista" | "estatisticas" | "relatorio";
 type Area = "legislativo" | "administrativo";
 
 function evento(texto: string, autorNome: string): Andamento {
@@ -90,7 +107,7 @@ function evento(texto: string, autorNome: string): Andamento {
 
 function textoMudanca(antes: Processo, form: FormState): string | null {
   const partes: string[] = [];
-  if (antes.numero !== form.numero.trim()) partes.push("o número");
+  if (numeroComAno(antes.numero, antes.dataLancamento) !== juntarNumero(form.numero, form.numeroAno)) partes.push("o número");
   if (antes.parte !== form.parte.trim()) partes.push("a parte");
   if (antes.assunto !== form.assunto.trim()) partes.push("o assunto");
   if (antes.tipo !== form.tipo) partes.push(`o tipo para ${form.tipo}`);
@@ -106,7 +123,7 @@ function textoMudanca(antes: Processo, form: FormState): string | null {
 function classificar(lista: Processo[], campo: OrdemCampo, dir: "asc" | "desc"): Processo[] {
   const fator = dir === "asc" ? 1 : -1;
   return [...lista].sort((a, b) => {
-    const numero = a.numero.localeCompare(b.numero, "pt-BR", { numeric: true });
+    const numero = numeroComAno(a.numero, a.dataLancamento).localeCompare(numeroComAno(b.numero, b.dataLancamento), "pt-BR", { numeric: true });
     const cmp =
       campo === "numero"
         ? numero
@@ -132,6 +149,7 @@ function useGradeTresColunas() {
 function emptyForm(): FormState {
   return {
     numero: "",
+    numeroAno: new Date().getFullYear(),
     parte: "",
     assunto: "",
     tipo: "Requerimentos",
@@ -143,8 +161,10 @@ function emptyForm(): FormState {
 }
 
 function formFrom(p: Processo): FormState {
+  const partes = separarNumero(p.numero, p.dataLancamento);
   return {
-    numero: p.numero,
+    numero: partes.numero,
+    numeroAno: partes.ano,
     parte: p.parte,
     assunto: p.assunto,
     tipo: p.tipo,
@@ -160,7 +180,7 @@ const TOM: Record<Urgencia, { badge: string; bar: string; label: string }> = {
   hoje: { badge: "bg-seal-soft text-seal", bar: "bg-seal", label: "Hoje" },
   proximo: { badge: "bg-brass-soft text-brass", bar: "bg-brass", label: "Vencendo" },
   ok: { badge: "bg-pine-soft text-pine", bar: "bg-pine", label: "No prazo" },
-  concluido: { badge: "bg-line text-muted", bar: "bg-line", label: "Concluído" },
+  concluido: { badge: "bg-line text-muted", bar: "bg-line", label: "Arquivado" },
 };
 
 function PranchetaGrafico({ className }: { className?: string }) {
@@ -177,6 +197,8 @@ function PranchetaGrafico({ className }: { className?: string }) {
 
 export function PrazosApp() {
   const { user, isPending } = useCurrentUserState();
+  const autenticador = useExigirAutenticador(Boolean(user));
+  const irPara = useNavigate();
   const [ready, setReady] = useState(false);
   const [contaId, setContaId] = useState<string | null>(null);
   const [processos, setProcessos] = useState<Processo[]>([]);
@@ -200,17 +222,33 @@ export function PrazosApp() {
   const [toast, setToast] = useState("");
   const [equipes, setEquipes] = useState<Equipe[]>([]);
   const [equipeAtual, setEquipeAtual] = useState<string | null>(null);
-  const [tipoAba, setTipoAba] = useState<TipoProcesso | "todos">("todos");
+  const [tipoAba, setTipoAba] = useState<string>("todos");
+  const [abasLeg, setAbasLeg] = useState<string[]>([...TIPOS]);
   const [ordemCampo, setOrdemCampo] = useState<OrdemCampo>("numero");
   const [ordemDir, setOrdemDir] = useState<"asc" | "desc">("asc");
   const [guia, setGuia] = useState<Guia>("lista");
+  const [periodoRelatorio, setPeriodoRelatorio] = useState<PeriodoRelatorio>("mensal");
+  const [ancoraRelatorio, setAncoraRelatorio] = useState(() => todayIso().slice(0, 7));
+  const [situacaoRelatorio, setSituacaoRelatorio] = useState<"todos" | Filtro>("todos");
+  const [relatorio, setRelatorio] = useState<{ rotulo: string; inicio: string; fim: string; itens: Processo[] } | null>(null);
   const [perfilOpen, setPerfilOpen] = useState(false);
   const [nomePerfil, setNomePerfil] = useState("");
   const [salvandoPerfil, setSalvandoPerfil] = useState(false);
   const [parte, setParte] = useState(0);
   const [area, setArea] = useState<Area>("legislativo");
+  const [trava, setTrava] = useState<string | null>(null);
+  const [souGestor, setSouGestor] = useState(false);
+  const [excluida, setExcluida] = useState(false);
+  const [motivoExclusaoId, setMotivoExclusaoId] = useState("");
+  const exclusaoVista = useRef(false);
   const tresColunas = useGradeTresColunas();
   const meuNome = user?.displayName?.trim() || "Sem nome";
+  const aberturaAplicada = useRef(false);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    assumirTemaDaConta(user.id);
+  }, [user?.id]);
 
   useEffect(() => {
     if (typeof Notification === "undefined") setPerm("unsupported");
@@ -218,9 +256,63 @@ export function PrazosApp() {
   }, []);
 
   useEffect(() => {
+    let vivo = true;
+    const ler = () => {
+      void estadoSistema()
+        .then((estado) => {
+          if (!vivo) return;
+          definirSemExpediente(estado.datas);
+          setSouGestor(Boolean(estado.administrador));
+          if (estado.bloqueado) setTrava("Seu acesso está bloqueado.");
+          else if (estado.manutencao && !estado.administrador) setTrava("O sistema está em manutenção. Tente de novo mais tarde.");
+          else setTrava(null);
+        })
+        .catch(() => undefined);
+    };
+    ler();
+    const id = window.setInterval(ler, 30_000);
+    return () => {
+      vivo = false;
+      window.clearInterval(id);
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    let vivo = true;
+    const ler = () => {
+      void consultarExclusao({ data: { userId: user.id } })
+        .then((estado) => {
+          if (!vivo || !estado.excluida || exclusaoVista.current) return;
+          sessionStorage.setItem("prazos.conta-excluida", "1");
+          sessionStorage.setItem("prazos.exclusao-motivo", estado.motivo);
+          setMotivoExclusaoId(estado.motivo);
+          setExcluida(true);
+        })
+        .catch(() => undefined);
+    };
+    ler();
+    const id = window.setInterval(ler, 3000);
+    return () => {
+      vivo = false;
+      window.clearInterval(id);
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
     if (!user?.id) return;
     let cancelado = false;
     const usuarioId = user.id;
+    if (!aberturaAplicada.current) {
+      aberturaAplicada.current = true;
+      const prefs = lerPreferencias(usuarioId);
+      const equipeInicial = prefs.escopo === "equipe" ? prefs.equipeId : null;
+      if (prefs.area !== area) setArea(prefs.area);
+      if (equipeInicial !== equipeAtual) {
+        setEquipeAtual(equipeInicial);
+        return;
+      }
+    }
     const equipeId = equipeAtual;
     if (contaId !== usuarioId) setReady(false);
     setProcessos([]);
@@ -242,7 +334,8 @@ export function PrazosApp() {
           if (!cancelado && locais.length) setToast("Processos deste navegador foram salvos na sua conta.");
         }
         if (cancelado) return;
-        setProcessos(lista);
+        const comAno = garantirAno(lista);
+        setProcessos(comAno);
         setContaId(usuarioId);
         setReady(true);
       } catch {
@@ -262,7 +355,7 @@ export function PrazosApp() {
     if (!user?.id || !ready) return;
     const id = window.setInterval(() => {
       void listarProcessos({ data: equipeAtual })
-        .then((lista) => setProcessos(lista))
+        .then((lista) => setProcessos(garantirAno(lista)))
         .catch(() => undefined);
       void listarEquipes()
         .then((minhas) => setEquipes(minhas))
@@ -271,6 +364,27 @@ export function PrazosApp() {
     return () => window.clearInterval(id);
   }, [user?.id, equipeAtual, ready]);
 
+  useEffect(() => {
+    if (!user?.id || !ready) return;
+    const bater = () => void marcarPresenca().catch(() => undefined);
+    bater();
+    const id = window.setInterval(bater, 20_000);
+    return () => window.clearInterval(id);
+  }, [user?.id, ready]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    void listarAbas()
+      .then((lista) => {
+        if (lista.legislativo.length) setAbasLeg(lista.legislativo);
+      })
+      .catch(() => undefined);
+  }, [user?.id]);
+
+  const abasTipo = [
+    { id: "todos", label: "Todos" },
+    ...[...ABAS_FIXAS, ...abasLeg.filter((nome) => !ABAS_FIXAS.includes(nome))].map((nome) => ({ id: nome, label: nome })),
+  ];
   const atencao = useMemo(
     () => ordenar(processos.filter((p) => precisaAviso(p))),
     [processos],
@@ -393,6 +507,7 @@ export function PrazosApp() {
   function validar(f: FormState): string[] {
     const lista: string[] = [];
     if (!f.numero.trim()) lista.push("Informe o número do processo.");
+    if (!/^\d{4}$/.test(String(f.numeroAno))) lista.push("Informe o ano do processo.");
     if (!f.parte.trim()) lista.push("Informe a parte ou o cliente.");
     if (!f.assunto.trim()) lista.push("Informe o assunto.");
     if (!f.dataLancamento) lista.push("Informe a data de lançamento.");
@@ -428,7 +543,7 @@ export function PrazosApp() {
       if (nota) extra.push(evento(nota, meuNome));
       const atualizado: Processo = {
         ...editing,
-        numero: form.numero.trim(),
+        numero: juntarNumero(form.numero, form.numeroAno),
         parte: form.parte.trim(),
         assunto: form.assunto.trim(),
         tipo: form.tipo,
@@ -449,7 +564,7 @@ export function PrazosApp() {
 
     const criado: Processo = {
       id: crypto.randomUUID(),
-      numero: form.numero.trim(),
+      numero: juntarNumero(form.numero, form.numeroAno),
       parte: form.parte.trim(),
       assunto: form.assunto.trim(),
       tipo: form.tipo,
@@ -541,8 +656,13 @@ export function PrazosApp() {
       processos.map((p) => (p.id === id ? atualizado : p)),
       atualizado,
       null,
-      "Marcado como concluído",
-    );
+      "Enviado para Arquivados",
+    ).then((ok) => {
+      if (ok) {
+        setGuia("lista");
+        setFiltro("concluidos");
+      }
+    });
   }
 
   function reabrir(id: string) {
@@ -600,6 +720,16 @@ export function PrazosApp() {
       setToast(`Equipe ${criada.nome} criada`);
     } catch (err) {
       setToast(err instanceof Error ? err.message : "Não foi possível criar a equipe.");
+    }
+  }
+
+  async function mudarNomeEquipe(equipeId: string, nome: string) {
+    try {
+      await renomearEquipe({ data: { equipeId, nome } });
+      setEquipes(await listarEquipes());
+      setToast("Nome da equipe atualizado");
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "Não foi possível mudar o nome.");
     }
   }
 
@@ -667,25 +797,38 @@ export function PrazosApp() {
     }
   }
 
-  if (isPending) {
+  if (isPending) return <CarregandoTemis />;
+
+  if (trava) {
     return (
-      <main className="mx-auto max-w-3xl px-4 py-16">
-        <p className="font-display text-3xl text-ink">Prazos</p>
-        <p className="mt-2 text-muted">Verificando sua conta…</p>
+      <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6">
+        <p className="font-display text-3xl text-ink">Auxilia Legis</p>
+        <p className="mt-2 text-sm text-muted">{trava}</p>
+        <Link to="/gestao" className="mt-6 text-sm font-medium text-pine">
+          Área restrita
+        </Link>
       </main>
+    );
+  }
+
+  if (excluida) {
+    return (
+      <AvisoContaExcluida
+        motivo={motivoExclusaoId}
+        onEntendi={() => {
+          exclusaoVista.current = true;
+          sessionStorage.setItem("prazos.exclusao-vista", "1");
+          void signOut().finally(() => setExcluida(false));
+        }}
+      />
     );
   }
 
   if (!user) return <TelaConta />;
 
-  if (!ready || contaId !== user.id) {
-    return (
-      <main className="mx-auto max-w-3xl px-4 py-16">
-        <p className="font-display text-3xl text-ink">Prazos</p>
-        <p className="mt-2 text-muted">Carregando seus processos…</p>
-      </main>
-    );
-  }
+  if (autenticador.gate === "exigir") return <CadastroAutenticador onPronto={autenticador.concluir} />;
+
+  if (!ready || contaId !== user.id || autenticador.gate !== "ok") return <CarregandoTemis />;
 
   return (
     <div className="mx-auto min-h-screen max-w-6xl px-4 py-6 md:px-8 md:py-8">
@@ -693,16 +836,33 @@ export function PrazosApp() {
         <h1 className="font-display text-2xl leading-tight text-ink sm:text-3xl">Assistente do Poder Legislativo</h1>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
           <UserButton />
-          <button
-            type="button"
-            onClick={() => {
-              setNomePerfil(user.displayName ?? "");
-              setPerfilOpen(true);
-            }}
-            className="inline-flex h-11 items-center justify-center rounded-xl border border-line bg-sheet px-4 text-sm font-medium text-ink"
-          >
-            Perfil
-          </button>
+          <div className="flex items-center gap-2">
+            <BotaoConfiguracoes equipes={equipes} userId={user.id} />
+            {souGestor && (
+            <button
+              type="button"
+              onClick={() => {
+                void abrirGestaoPelaConta()
+                  .then((resultado) => sessionStorage.setItem("gestao.token", resultado.token))
+                  .catch(() => undefined)
+                  .finally(() => void irPara({ to: "/gestao" }));
+              }}
+              className="inline-flex h-11 flex-1 items-center justify-center rounded-xl border border-line bg-sheet px-4 text-sm font-medium text-ink sm:flex-none"
+            >
+              Área restrita
+            </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setNomePerfil(user.displayName ?? "");
+                setPerfilOpen(true);
+              }}
+              className="inline-flex h-11 flex-1 items-center justify-center rounded-xl border border-line bg-sheet px-4 text-sm font-medium text-ink sm:flex-none"
+            >
+              Perfil
+            </button>
+          </div>
           {area !== "administrativo" && (
           <button
             type="button"
@@ -754,6 +914,7 @@ export function PrazosApp() {
             onCriar={criarNovaEquipe}
             onAdicionar={incluirNaEquipe}
             onRemover={tirarDaEquipe}
+            onRenomear={mudarNomeEquipe}
           />
           <CaixaAvisos perm={perm} onAtivar={ativarAvisos} />
         </AdminPainel>
@@ -776,6 +937,7 @@ export function PrazosApp() {
             onCriar={criarNovaEquipe}
             onAdicionar={incluirNaEquipe}
             onRemover={tirarDaEquipe}
+            onRenomear={mudarNomeEquipe}
           />
 
           <div className="rounded-2xl border border-line bg-sheet p-4">
@@ -810,10 +972,45 @@ export function PrazosApp() {
               <BarChart3 className="size-4" />
               Estatísticas
             </button>
+            <button
+              type="button"
+              onClick={() => setGuia("relatorio")}
+              className={
+                "inline-flex h-11 items-center gap-2 rounded-xl px-4 text-sm font-medium " +
+                (guia === "relatorio" ? "bg-ink text-sheet" : "border border-line bg-sheet text-ink")
+              }
+            >
+              <FileText className="size-4" />
+              Relatório
+            </button>
           </div>
 
           {guia === "estatisticas" ? (
             <PainelEstatisticas processos={processos} />
+          ) : guia === "relatorio" ? (
+            <RelatorioLegislativo
+              periodo={periodoRelatorio}
+              ancora={ancoraRelatorio}
+              situacao={situacaoRelatorio}
+              relatorio={relatorio}
+              onPeriodo={setPeriodoRelatorio}
+              onAncora={setAncoraRelatorio}
+              onSituacao={setSituacaoRelatorio}
+              onGerar={() => {
+                const intervalo = intervaloPeriodo(ancoraRelatorio, periodoRelatorio);
+                if (!intervalo) {
+                  setToast("Escolha um mês de referência.");
+                  return;
+                }
+                const itens = processos
+                  .filter((item) => item.dataLancamento <= intervalo.fim && item.prazo >= intervalo.inicio)
+                  .filter((item) => passaSituacao(item, situacaoRelatorio))
+                  .sort((a, b) =>
+                    numeroComAno(a.numero, a.dataLancamento).localeCompare(numeroComAno(b.numero, b.dataLancamento), "pt-BR", { numeric: true }),
+                  );
+                setRelatorio({ ...intervalo, itens });
+              }}
+            />
           ) : (
             <>
               {atencao.length > 0 && (
@@ -836,7 +1033,7 @@ export function PrazosApp() {
                         <li key={p.id} className="flex items-start gap-3 text-sm">
                           <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${TOM[u].bar}`} />
                           <span className="min-w-0">
-                            <span className="font-medium text-ink">{p.numero}</span>
+                            <span className="font-medium text-ink">{numeroComAno(p.numero, p.dataLancamento)}</span>
                             <span className="text-pine"> · {p.tipo}</span>
                             <span className="block text-ink">{p.parte}</span>
                             <span className="text-muted"> · {p.assunto}</span>
@@ -863,7 +1060,7 @@ export function PrazosApp() {
                   />
                 </label>
                 <div className="flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Tipo de processo">
-                  {ABAS_TIPO.map((item) => (
+                  {abasTipo.map((item) => (
                     <button
                       key={item.id}
                       type="button"
@@ -886,11 +1083,13 @@ export function PrazosApp() {
                       type="button"
                       onClick={() => setFiltro(item.id)}
                       className={
-                        "h-10 shrink-0 rounded-full px-3 text-sm font-medium " +
+                        "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3 text-sm font-medium " +
                         (filtro === item.id ? "bg-ink text-sheet" : "border border-line bg-sheet text-ink")
                       }
                     >
+                      {item.id === "concluidos" && <Archive className="size-3.5" />}
                       {item.label}
+                      {item.id === "concluidos" ? ` (${processos.filter((p) => p.status === "concluido").length})` : ""}
                     </button>
                   ))}
                 </div>
@@ -925,7 +1124,9 @@ export function PrazosApp() {
                   ? equipeSelecionada
                     ? "Nenhum processo nesta equipe. Lance um para todos acompanharem o prazo."
                     : "Lance o primeiro processo com a data e o prazo de resposta."
-                  : "Nada corresponde a este filtro ou à busca."}
+                  : filtro === "concluidos"
+                    ? "A pasta Arquivados está vazia. Ao concluir um processo, ele vem para cá."
+                    : "Nada corresponde a este filtro ou à busca."}
               </p>
               {processos.length === 0 && (
                 <button
@@ -1029,13 +1230,39 @@ export function PrazosApp() {
                   </ul>
                 )}
                 <Campo label="Número do processo">
-                  <input
-                    value={form.numero}
-                    onChange={(e) => setForm({ ...form, numero: e.target.value })}
-                    className={inputCls}
-                    placeholder="0000000-00.0000.0.00.0000"
-                    required
-                  />
+                  <div className="grid grid-cols-[1fr_auto_7rem] items-center gap-2">
+                    <input
+                      value={form.numero}
+                      onChange={(e) => {
+                        const bruto = e.target.value;
+                        const corte = /^(.*)\/(\d{1,4})$/.exec(bruto);
+                        if (corte) {
+                          setForm({ ...form, numero: corte[1], numeroAno: Number(corte[2]) });
+                          return;
+                        }
+                        setForm({ ...form, numero: bruto.replace(/\/+$/, "") });
+                      }}
+                      className={inputCls}
+                      placeholder="198"
+                      inputMode="numeric"
+                      required
+                    />
+                    <span className="text-lg text-muted" aria-hidden>
+                      /
+                    </span>
+                    <input
+                      value={form.numeroAno || ""}
+                      onChange={(e) => {
+                        const digitos = e.target.value.replace(/\D/g, "").slice(0, 4);
+                        setForm({ ...form, numeroAno: digitos ? Number(digitos) : 0 });
+                      }}
+                      className={inputCls}
+                      placeholder="2026"
+                      inputMode="numeric"
+                      aria-label="Ano do processo"
+                      required
+                    />
+                  </div>
                 </Campo>
                 <Campo label="Parte ou cliente">
                   <input
@@ -1061,7 +1288,7 @@ export function PrazosApp() {
                     onChange={(e) => setForm({ ...form, tipo: e.target.value as TipoProcesso })}
                     className={inputCls}
                   >
-                    {ABAS_TIPO.filter((item) => item.id !== "todos").map((tipo) => (
+                    {abasTipo.filter((item) => item.id !== "todos").map((tipo) => (
                       <option key={tipo.id}>{tipo.label}</option>
                     ))}
                   </select>
@@ -1300,6 +1527,7 @@ export function PrazosApp() {
           {toast}
         </p>
       )}
+      <AjudaFlutuante nome={meuNome} area={area} />
     </div>
   );
 }
@@ -1363,7 +1591,7 @@ function TextoAvisos({
 
 function Campo({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+    <label className="flex min-w-0 max-w-full flex-col gap-1 text-sm font-medium text-ink">
       {label}
       {children}
     </label>
@@ -1428,7 +1656,9 @@ function ProcessoCard({
         <div className="flex flex-wrap items-center gap-2">
           <span className={`rounded-full px-2 py-1 text-xs font-medium ${tom.badge}`}>{prazoLabel(processo)}</span>
         </div>
-        <p className="mt-3 font-display text-2xl leading-none tracking-tight text-ink">{processo.numero}</p>
+        <p className="mt-3 font-display text-2xl leading-none tracking-tight text-ink">
+          {numeroComAno(processo.numero, processo.dataLancamento)}
+        </p>
         <p className="mt-1 text-sm font-semibold text-pine">{processo.tipo}</p>
         <h2 className="mt-2 text-base font-semibold text-ink">{processo.parte}</h2>
         <p className="text-sm text-muted">{processo.assunto}</p>
@@ -1510,7 +1740,7 @@ function ProcessoCard({
               className="inline-flex h-10 items-center gap-1 rounded-lg border border-line px-3 text-sm font-medium text-ink"
             >
               <Check className="size-4" />
-              Concluir
+              Arquivar
             </button>
           ) : (
             <button
@@ -1579,6 +1809,7 @@ function PainelEquipe({
   onCriar,
   onAdicionar,
   onRemover,
+  onRenomear,
 }: {
   equipes: Equipe[];
   atual: string | null;
@@ -1587,11 +1818,14 @@ function PainelEquipe({
   onCriar: (nome: string) => Promise<void>;
   onAdicionar: (email: string) => Promise<void>;
   onRemover: (email: string) => Promise<void>;
+  onRenomear: (equipeId: string, nome: string) => Promise<void>;
 }) {
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
   const [ocupado, setOcupado] = useState(false);
   const [sobre, setSobre] = useState<string | null>(null);
+  const [menuId, setMenuId] = useState<string | null>(null);
+  const [nomeEdicao, setNomeEdicao] = useState("");
   const soltar = useContext(SoltarProcessoContext);
   const selecionada = equipes.find((equipe) => equipe.id === atual) ?? null;
   const soltou = useRef(false);
@@ -1652,15 +1886,70 @@ function PainelEquipe({
           Só meus
         </button>
         {equipes.map((equipe) => (
-          <button
-            key={equipe.id}
-            type="button"
-            onClick={() => escolher(equipe.id)}
-            {...alvoArraste(equipe.id, equipe.id)}
-            className={classeAlvo(equipe.id, atual === equipe.id)}
-          >
-            {equipe.nome}
-          </button>
+          <div key={equipe.id} className="relative">
+            <button
+              type="button"
+              onClick={() => escolher(equipe.id)}
+              {...alvoArraste(equipe.id, equipe.id)}
+              className={classeAlvo(equipe.id, atual === equipe.id) + " w-full " + (equipe.papel === "dono" ? "pr-9" : "")}
+            >
+              <span className="block truncate">{equipe.nome}</span>
+            </button>
+            {equipe.papel === "dono" && (
+              <button
+                type="button"
+                aria-label="Opções da equipe"
+                aria-expanded={menuId === equipe.id}
+                onClick={() => {
+                  setMenuId((atualId) => (atualId === equipe.id ? null : equipe.id));
+                  setNomeEdicao(equipe.nome);
+                }}
+                className={
+                  "absolute right-1 top-1.5 grid size-7 place-items-center rounded-lg " +
+                  (atual === equipe.id ? "text-sheet" : "text-muted")
+                }
+              >
+                <Ellipsis className="size-4" />
+              </button>
+            )}
+            {equipe.papel === "dono" && menuId === equipe.id && (
+              <form
+                className="absolute right-0 top-11 z-20 flex w-full flex-col gap-2 rounded-xl border border-line bg-sheet p-3 shadow-lg"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const proximo = nomeEdicao.trim();
+                  if (ocupado || proximo.length < 2 || proximo === equipe.nome) {
+                    setMenuId(null);
+                    return;
+                  }
+                  setOcupado(true);
+                  void onRenomear(equipe.id, proximo).finally(() => {
+                    setOcupado(false);
+                    setMenuId(null);
+                  });
+                }}
+              >
+                <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+                  Mudar nome
+                  <input
+                    value={nomeEdicao}
+                    onChange={(event) => setNomeEdicao(event.target.value)}
+                    className="h-11 rounded-xl border border-line bg-paper px-3 text-sm font-normal"
+                    spellCheck
+                    lang="pt-BR"
+                    autoFocus
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={ocupado}
+                  className="inline-flex h-11 items-center justify-center rounded-xl bg-pine text-sm font-medium text-sheet disabled:opacity-60"
+                >
+                  Salvar
+                </button>
+              </form>
+            )}
+          </div>
         ))}
       </div>
 
@@ -1764,6 +2053,162 @@ function PainelEquipe({
             </form>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+function garantirAno(lista: Processo[]): Processo[] {
+  const pendentes: Processo[] = [];
+  const saida = lista.map((item) => {
+    const numero = numeroComAno(item.numero, item.dataLancamento);
+    if (numero === item.numero) return item;
+    const atualizado = { ...item, numero };
+    pendentes.push(atualizado);
+    return atualizado;
+  });
+  for (const item of pendentes) void salvarProcesso({ data: item });
+  return saida;
+}
+
+function passaSituacao(item: Processo, situacao: "todos" | Filtro) {
+  if (situacao === "todos") return true;
+  const u = urgencia(item);
+  if (situacao === "abertos") return item.status === "andamento";
+  if (situacao === "atencao") return precisaAviso(item);
+  if (situacao === "vencidos") return u === "vencido";
+  if (situacao === "prazo") return u === "ok";
+  if (situacao === "concluidos") return item.status === "concluido";
+  return true;
+}
+
+function RelatorioLegislativo({
+  periodo,
+  ancora,
+  situacao,
+  relatorio,
+  onPeriodo,
+  onAncora,
+  onSituacao,
+  onGerar,
+}: {
+  periodo: PeriodoRelatorio;
+  ancora: string;
+  situacao: "todos" | Filtro;
+  relatorio: { rotulo: string; inicio: string; fim: string; itens: Processo[] } | null;
+  onPeriodo: (valor: PeriodoRelatorio) => void;
+  onAncora: (valor: string) => void;
+  onSituacao: (valor: "todos" | Filtro) => void;
+  onGerar: () => void;
+}) {
+  const rotuloSituacao =
+    situacao === "todos" ? "todas as situações" : (FILTROS.find((item) => item.id === situacao)?.label.toLowerCase() ?? situacao);
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="no-print min-w-0 rounded-2xl border border-line bg-sheet p-4">
+        <h2 className="font-display text-2xl text-ink">Gerar relatório</h2>
+        <p className="mt-1 text-sm text-muted">
+          Entram os processos cujo lançamento e prazo cruzam o período. Os gráficos acompanham o recorte.
+        </p>
+        <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
+          <Campo label="Período">
+            <select value={periodo} onChange={(e) => onPeriodo(e.target.value as PeriodoRelatorio)} className={inputCls}>
+              <option value="mensal">Mensal</option>
+              <option value="trimestral">Trimestral</option>
+              <option value="semestral">Semestral</option>
+              <option value="anual">Anual</option>
+            </select>
+          </Campo>
+          <Campo label="Mês de referência">
+            <CampoMes value={ancora} onChange={onAncora} />
+          </Campo>
+          <Campo label="Situação">
+            <select value={situacao} onChange={(e) => onSituacao(e.target.value as "todos" | Filtro)} className={inputCls}>
+              {FILTROS.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </Campo>
+        </div>
+        <button
+          type="button"
+          onClick={onGerar}
+          className="mt-4 inline-flex h-11 items-center gap-2 rounded-xl bg-pine px-4 text-sm font-medium text-sheet"
+        >
+          <FileText className="size-4" />
+          Gerar relatório
+        </button>
+      </div>
+      {relatorio && (
+        <article className="relatorio-folha rounded-2xl border border-line bg-sheet p-4 md:p-6">
+          <Timbrado />
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-pine">Processos legislativos</p>
+              <h2 className="font-display text-2xl text-ink sm:text-3xl">Relatório · {relatorio.rotulo}</h2>
+              <p className="mt-1 text-sm text-muted">
+                {formatDate(relatorio.inicio)} a {formatDate(relatorio.fim)} · {rotuloSituacao} · {relatorio.itens.length}{" "}
+                {relatorio.itens.length === 1 ? "processo" : "processos"}
+              </p>
+            </div>
+            <BotaoRelatorio />
+          </div>
+          <PainelEstatisticas processos={relatorio.itens} className="relatorio-graficos mt-4 grid gap-4 lg:grid-cols-2" />
+          {relatorio.itens.length === 0 ? (
+            <p className="mt-4 text-sm text-muted">Nenhum processo neste período.</p>
+          ) : (
+            <>
+              <ul className="relatorio-cards mt-4 flex flex-col gap-3 md:hidden">
+                {relatorio.itens.map((item) => (
+                  <li key={item.id} className="rounded-xl border border-line p-3 text-sm">
+                    <p className="font-medium text-ink">{numeroComAno(item.numero, item.dataLancamento)}</p>
+                    <p className="text-pine">{item.tipo}</p>
+                    <p className="text-ink">{item.parte}</p>
+                    <p className="text-muted">{item.assunto}</p>
+                    <p className="mt-1 text-ink">
+                      {prazoLabel(item)} · {formatDate(item.prazo)}
+                    </p>
+                    <p className="text-muted">{rotuloRetorno(item)}</p>
+                    <p className="text-ink">{rotuloResposta(item)}</p>
+                  </li>
+                ))}
+              </ul>
+              <div className="relatorio-tabela-wrap mt-4 hidden md:block">
+                <table className="relatorio-tabela w-full border-collapse text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-line text-xs text-muted">
+                      <th className="py-2 pr-3 font-medium">Número</th>
+                      <th className="py-2 pr-3 font-medium">Tipo</th>
+                      <th className="py-2 pr-3 font-medium">Parte</th>
+                      <th className="py-2 pr-3 font-medium">Assunto</th>
+                      <th className="py-2 pr-3 font-medium">Prazo</th>
+                      <th className="py-2 pr-3 font-medium">Retorno</th>
+                      <th className="py-2 font-medium">Resposta</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {relatorio.itens.map((item) => (
+                      <tr key={item.id} className="border-b border-line align-top">
+                        <td className="py-2 pr-3 font-medium text-ink">{numeroComAno(item.numero, item.dataLancamento)}</td>
+                        <td className="py-2 pr-3 text-ink">{item.tipo}</td>
+                        <td className="py-2 pr-3 text-ink">{item.parte}</td>
+                        <td className="py-2 pr-3 text-ink">{item.assunto}</td>
+                        <td className="py-2 pr-3 text-ink">
+                          {prazoLabel(item)} · {formatDate(item.prazo)}
+                        </td>
+                        <td className="py-2 pr-3 text-ink">{rotuloRetorno(item)}</td>
+                        <td className="py-2 text-ink">{rotuloResposta(item)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+          <TimbradoRodape />
+        </article>
       )}
     </div>
   );

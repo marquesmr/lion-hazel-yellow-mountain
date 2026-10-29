@@ -117,7 +117,29 @@ export const criarEquipe = createServerFn({ method: "POST" })
       insert into equipe_membros (equipe_id, user_id, papel)
       values (${id}, ${context.userId}, 'dono')
     `;
+    const { anotarUso } = await import("./gestao.server");
+    void anotarUso(context.userId, "Criou equipe", nome).catch(() => undefined);
     return { id, nome };
+  });
+
+export const renomearEquipe = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    if (!input || typeof input !== "object") throw new Error("Dados inválidos");
+    const bruto = input as { equipeId?: unknown; nome?: unknown };
+    if (typeof bruto.equipeId !== "string" || !bruto.equipeId.trim()) throw new Error("Dados inválidos");
+    if (typeof bruto.nome !== "string" || bruto.nome.trim().length < 2) throw new Error("Dê um nome para a equipe.");
+    return { equipeId: bruto.equipeId.trim().slice(0, 80), nome: bruto.nome.trim().slice(0, 60) };
+  })
+  .middleware([authMiddleware])
+  .handler(async ({ context, data }) => {
+    const sql = await getSql();
+    const dono = await sql<{ ok: number }>`
+      select 1 as ok from equipe_membros
+      where equipe_id = ${data.equipeId} and user_id = ${context.userId} and papel = 'dono'
+    `;
+    if (!dono.length) throw new Error("Só quem criou a equipe pode mudar o nome.");
+    await sql`update equipes set nome = ${data.nome} where id = ${data.equipeId}`;
+    return { nome: data.nome };
   });
 
 export const adicionarNaEquipe = createServerFn({ method: "POST" })

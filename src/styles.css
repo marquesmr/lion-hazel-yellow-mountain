@@ -19,6 +19,134 @@
   --radius-card: 1rem;
 }
 
+html[data-tema="escuro"] {
+  color-scheme: dark;
+  --color-paper: #12110e;
+  --color-sheet: #1c1915;
+  --color-ink: #f4efe6;
+  --color-muted: #b7aea2;
+  --color-line: #3d362e;
+  --color-pine: #8ec8f2;
+  --color-pine-soft: #163044;
+  --color-brass: #e0a15a;
+  --color-brass-soft: #3a2c1c;
+  --color-seal: #f0a8a2;
+  --color-seal-soft: #3a2220;
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-tema="auto"] {
+    color-scheme: dark;
+    --color-paper: #12110e;
+    --color-sheet: #1c1915;
+    --color-ink: #f4efe6;
+    --color-muted: #b7aea2;
+    --color-line: #3d362e;
+    --color-pine: #8ec8f2;
+    --color-pine-soft: #163044;
+    --color-brass: #e0a15a;
+    --color-brass-soft: #3a2c1c;
+    --color-seal: #f0a8a2;
+    --color-seal-soft: #3a2220;
+  }
+}
+
+html[data-cor="azul"] {
+  --color-pine: #1a4e86;
+  --color-pine-soft: #e4eef8;
+}
+
+html[data-cor="vinho"] {
+  --color-pine: #6e1f3d;
+  --color-pine-soft: #f6e6ec;
+  --color-seal: #6e5400;
+  --color-seal-soft: #f8f1cc;
+  --color-brass: #74580a;
+  --color-brass-soft: #f7f0d6;
+}
+
+html[data-cor="laranja"] {
+  --color-pine: #8f3d0c;
+  --color-pine-soft: #f8eadf;
+  --color-seal: #9a2e2e;
+  --color-seal-soft: #f8e6e4;
+  --color-brass: #7a2424;
+  --color-brass-soft: #f8e4e2;
+}
+
+html[data-cor="roxo"] {
+  --color-pine: #5c2d82;
+  --color-pine-soft: #f0e6f8;
+}
+
+html[data-tema="escuro"][data-cor="verde"] {
+  --color-pine: #8fceb4;
+  --color-pine-soft: #1a332b;
+}
+
+html[data-tema="escuro"][data-cor="azul"] {
+  --color-pine: #8ec8f2;
+  --color-pine-soft: #163044;
+}
+
+html[data-tema="escuro"][data-cor="vinho"] {
+  --color-pine: #f0a8c0;
+  --color-pine-soft: #3a1c28;
+  --color-seal: #f6de86;
+  --color-seal-soft: #3a3214;
+  --color-brass: #e6c15a;
+  --color-brass-soft: #332c14;
+}
+
+html[data-tema="escuro"][data-cor="laranja"] {
+  --color-pine: #f3b183;
+  --color-pine-soft: #3a2618;
+  --color-seal: #f0a8a2;
+  --color-seal-soft: #3a2220;
+  --color-brass: #e08a84;
+  --color-brass-soft: #3a2220;
+}
+
+html[data-tema="escuro"][data-cor="roxo"] {
+  --color-pine: #d2b4f0;
+  --color-pine-soft: #2c2038;
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-tema="auto"][data-cor="verde"] {
+    --color-pine: #8fceb4;
+    --color-pine-soft: #1a332b;
+  }
+
+  html[data-tema="auto"][data-cor="azul"] {
+    --color-pine: #8ec8f2;
+    --color-pine-soft: #163044;
+  }
+
+  html[data-tema="auto"][data-cor="vinho"] {
+    --color-pine: #f0a8c0;
+    --color-pine-soft: #3a1c28;
+    --color-seal: #f6de86;
+    --color-seal-soft: #3a3214;
+    --color-brass: #e6c15a;
+    --color-brass-soft: #332c14;
+  }
+
+  html[data-tema="auto"][data-cor="laranja"] {
+    --color-pine: #f3b183;
+    --color-pine-soft: #3a2618;
+    --color-seal: #f0a8a2;
+    --color-seal-soft: #3a2220;
+    --color-brass: #e08a84;
+    --color-brass-soft: #3a2220;
+  }
+
+  html[data-tema="auto"][data-cor="roxo"] {
+    --color-pine: #d2b4f0;
+    --color-pine-soft: #2c2038;
+  }
+}
+
 @layer base {
   button:not(:disabled),
   [role="button"]:not(:disabled) {
@@ -56,7 +184,7 @@
   @media print {
     @page {
       size: A4 portrait;
-      margin: 12mm 10mm;
+      margin: 0;
     }
 
     html,
@@ -65,6 +193,13 @@
       height: auto !important;
       min-height: 0 !important;
       overflow: visible !important;
+      --color-paper: #ffffff;
+      --color-sheet: #ffffff;
+      --color-ink: #1b1915;
+      --color-muted: #6d665c;
+      --color-line: #e3dcd0;
+      --color-pine: #1c4738;
+      --color-pine-soft: #e6f1eb;
     }
 
     body.imprimindo > :not(.relatorio-folha) {
@@ -77,7 +212,7 @@
       width: 100%;
       max-width: none;
       margin: 0;
-      padding: 0;
+      padding: 10mm 12mm 12mm !important;
       border: 0 !important;
       border-radius: 0 !important;
       box-shadow: none !important;
@@ -89,6 +224,14 @@
 
     body.imprimindo .no-print {
       display: none !important;
+    }
+
+    body.imprimindo .relatorio-cards {
+      display: none !important;
+    }
+
+    body.imprimindo .relatorio-tabela-wrap {
+      display: block !important;
     }
 
     body.imprimindo .relatorio-folha .overflow-x-auto,
@@ -103,6 +246,8 @@
 
     body.imprimindo .relatorio-tabela {
       width: 100%;
+      max-width: 100%;
+      table-layout: fixed;
       border-collapse: collapse;
       font-size: 8pt;
       line-height: 1.3;
@@ -120,7 +265,7 @@
 
     body.imprimindo .relatorio-tabela th,
     body.imprimindo .relatorio-tabela .col-fixa {
-      white-space: nowrap;
+      white-space: normal;
     }
 
     body.imprimindo .relatorio-tabela thead {
@@ -146,7 +291,7 @@
       max-width: 100%;
     }
 
-    body.imprimindo .relatorio-folha .grid {
+    body.imprimindo .relatorio-folha .grid:not(.relatorio-graficos) {
       display: block !important;
     }
 
@@ -155,14 +300,364 @@
       height: 42mm;
     }
 
-    body.imprimindo .relatorio-folha::after {
-      content: "Assistente do Poder Legislativo";
-      display: block;
-      margin-top: 10pt;
-      border-top: 0.4pt solid #e3dcd0;
-      padding-top: 6pt;
-      font-size: 8pt;
-      color: #6d665c;
+    body.imprimindo .relatorio-folha .relatorio-graficos {
+      display: flex !important;
+      flex-flow: row wrap !important;
+      align-items: stretch !important;
+      gap: 3mm !important;
+      margin-top: 3mm !important;
+      break-before: avoid;
+      break-inside: auto;
+      page-break-inside: auto;
+    }
+
+    body.imprimindo .relatorio-folha .relatorio-graficos > section {
+      flex: 0 0 calc(50% - 1.6mm) !important;
+      width: calc(50% - 1.6mm) !important;
+      max-width: calc(50% - 1.6mm) !important;
+      min-width: 0 !important;
+      box-sizing: border-box !important;
+      padding: 2.5mm 3mm !important;
+      border: 0.5pt solid #e3dcd0 !important;
+      border-radius: 2.5mm !important;
+      background: #fff !important;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    body.imprimindo .relatorio-folha .relatorio-graficos h2 {
+      font-size: 12pt !important;
+      line-height: 1.15 !important;
+    }
+
+    body.imprimindo .relatorio-folha .relatorio-graficos p,
+    body.imprimindo .relatorio-folha .relatorio-graficos li {
+      font-size: 8pt !important;
+      line-height: 1.25 !important;
+    }
+
+    body.imprimindo .relatorio-folha .relatorio-graficos p {
+      margin-top: 0.6mm !important;
+    }
+
+    body.imprimindo .relatorio-folha .relatorio-graficos ul {
+      margin-top: 1.5mm !important;
+      gap: 0.8mm !important;
+    }
+
+    body.imprimindo .relatorio-folha .relatorio-graficos svg {
+      width: 28mm !important;
+      height: 28mm !important;
+      margin-top: 1mm !important;
     }
   }
 }
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  body.imprimindo .relatorio-cards {
+    display: none !important;
+  }
+
+  body.imprimindo .relatorio-tabela-wrap {
+    display: block !important;
+  }
+
+  body.imprimindo .relatorio-tabela {
+    display: table !important;
+  }
+}
+
+.temis-tela {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  background: var(--color-paper);
+}
+
+.temis-aviso {
+  margin: 0;
+  padding: 1.6rem 1.25rem 0;
+  color: var(--color-muted);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+
+.temis-centro {
+  display: grid;
+  flex: 1;
+  place-items: center;
+}
+
+.temis-balanca {
+  position: relative;
+  width: min(62vw, 16rem);
+  aspect-ratio: 1;
+  color: var(--color-pine);
+}
+
+.temis-balanca svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 17;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  shape-rendering: geometricPrecision;
+}
+
+.temis-haste,
+.temis-prato {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+}
+
+.temis-haste {
+  transform-origin: 50% 20.83%;
+  animation: temis-haste 0.9s ease-in-out infinite;
+}
+
+.temis-prato-esq {
+  transform-origin: 20.83% 33.33%;
+  animation: temis-prato-esq 0.9s ease-in-out infinite;
+}
+
+.temis-prato-dir {
+  transform-origin: 79.17% 33.33%;
+  animation: temis-prato-dir 0.9s ease-in-out infinite;
+}
+
+@keyframes temis-haste {
+  0%, 100% { transform: rotate(-7deg); }
+  50% { transform: rotate(7deg); }
+}
+
+@keyframes temis-prato-esq {
+  0%, 100% { transform: rotate(12deg); }
+  50% { transform: rotate(-10deg); }
+}
+
+@keyframes temis-prato-dir {
+  0%, 100% { transform: rotate(-11deg); }
+  50% { transform: rotate(10deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .temis-haste,
+  .temis-prato-esq,
+  .temis-prato-dir {
+    animation: none;
+  }
+}
+
+@media print {
+  html,
+  html[data-tema],
+  html[data-cor],
+  html[data-tema][data-cor] {
+    --color-paper: #ffffff !important;
+    --color-sheet: #ffffff !important;
+    --color-ink: #1b1915 !important;
+    --color-muted: #6d665c !important;
+    --color-line: #e3dcd0 !important;
+    --color-pine: #1c4738 !important;
+    --color-pine-soft: #e6f1eb !important;
+    --color-brass: #7a4510 !important;
+    --color-brass-soft: #f8edd9 !important;
+    --color-seal: #9a2e2e !important;
+    --color-seal-soft: #f8e6e4 !important;
+  }
+}
+
+.timbrado-topo,
+.timbrado-base {
+  color: #1b1915;
+}
+
+.timbrado-topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -0.25rem 0 1rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 2px solid #1c4738;
+}
+
+.timbrado-lado {
+  text-align: right;
+}
+
+.timbrado-marca {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.timbrado-selo {
+  display: grid;
+  width: 2.4rem;
+  height: 2.4rem;
+  flex: none;
+  place-items: center;
+  border-radius: 0.7rem;
+  background: #1c4738;
+}
+
+.timbrado-selo svg {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+.timbrado-marca strong,
+.timbrado-base strong {
+  display: block;
+  color: #1c4738;
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  line-height: 1.15;
+}
+
+.timbrado-marca em {
+  display: block;
+  color: #6d665c;
+  font-size: 0.72rem;
+  font-style: normal;
+  line-height: 1.3;
+}
+
+.timbrado-topo .timbrado-lado p,
+.timbrado-base span {
+  margin: 0;
+  color: #6d665c;
+  font-size: 0.72rem;
+  line-height: 1.3;
+  text-align: right;
+}
+
+.timbrado-linhas {
+  display: none;
+}
+
+.timbrado-base {
+  margin-top: 1.25rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid #e3dcd0;
+}
+
+.timbrado-base p {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+}
+
+@media print {
+  body.imprimindo .timbrado-topo,
+  body.imprimindo .timbrado-base {
+    position: static;
+    width: 100%;
+    margin: 0;
+    border: 0;
+    background: #fff;
+    color: #1b1915;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  body.imprimindo .timbrado-topo {
+    display: block;
+    position: relative;
+    margin-bottom: 4mm;
+    padding: 0 0 1.5mm;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  body.imprimindo .timbrado-topo .timbrado-marca {
+    display: flex;
+  }
+
+  body.imprimindo .timbrado-lado {
+    position: absolute;
+    top: 0;
+    right: 0;
+    text-align: right;
+  }
+
+  body.imprimindo .timbrado-base {
+    margin-top: 8mm;
+    padding: 0;
+    break-before: avoid;
+    page-break-before: avoid;
+  }
+
+  body.imprimindo .timbrado-base p {
+    display: flex;
+    justify-content: space-between;
+    padding-top: 1.2mm;
+  }
+
+  body.imprimindo .timbrado-linhas {
+    display: block;
+    width: 100%;
+    margin-top: 1.4mm;
+  }
+
+  body.imprimindo .timbrado-base .timbrado-linhas {
+    margin: 0 0 1.2mm;
+  }
+
+  body.imprimindo .timbrado-linhas i {
+    display: block;
+    height: 0;
+    border: 0;
+    border-top: 1.6pt solid #1c4738;
+  }
+
+  body.imprimindo .timbrado-linhas i + i {
+    margin-top: 0.7mm;
+    border-top-width: 0.4pt;
+  }
+
+  body.imprimindo .timbrado-selo {
+    width: 9mm;
+    height: 9mm;
+    border-radius: 1.8mm;
+    background: #1c4738 !important;
+  }
+
+  body.imprimindo .timbrado-selo svg {
+    width: 5.2mm !important;
+    height: 5.2mm !important;
+  }
+
+  body.imprimindo .timbrado-marca strong,
+  body.imprimindo .timbrado-base strong {
+    color: #1c4738 !important;
+    font-size: 11pt !important;
+  }
+
+  body.imprimindo .timbrado-marca em,
+  body.imprimindo .timbrado-lado p,
+  body.imprimindo .timbrado-base span {
+    color: #6d665c !important;
+    font-size: 8pt !important;
+  }
+}
+
+
