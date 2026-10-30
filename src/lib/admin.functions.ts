@@ -330,6 +330,35 @@ const SELECT_ADMIN = `
   coalesce(nullif(p.autor_nome, ''), u.name, '') as autor_nome
 `;
 
+export async function adminDaConta(userId: string, equipeId: string | null) {
+  const sql = await getSql();
+  await garantirColunas(sql);
+  if (!equipeId) {
+    const linhas = await sql.query<Linha>(
+      `select ${SELECT_ADMIN}
+       from processos_admin p
+       left join "user" u on u.id = p.user_id
+       where p.user_id = $1 and p.team_id is null
+       order by p.encerramento asc`,
+      [userId],
+    );
+    return linhas.map(linhaParaAdmin);
+  }
+  const membro = await sql<{ ok: number }>`
+    select 1 as ok from equipe_membros where equipe_id = ${equipeId} and user_id = ${userId}
+  `;
+  if (!membro.length) throw new Error("Você não faz parte desta equipe.");
+  const linhas = await sql.query<Linha>(
+    `select ${SELECT_ADMIN}
+     from processos_admin p
+     left join "user" u on u.id = p.user_id
+     where p.team_id = $1
+     order by p.encerramento asc`,
+    [equipeId],
+  );
+  return linhas.map(linhaParaAdmin);
+}
+
 export const listarAdmin = createServerFn({ method: "GET" })
   .validator((equipeId: unknown) => {
     if (equipeId == null || equipeId === "") return null;
@@ -337,34 +366,7 @@ export const listarAdmin = createServerFn({ method: "GET" })
     return equipeId.trim().slice(0, 80);
   })
   .middleware([authMiddleware])
-  .handler(async ({ context, data: equipeId }) => {
-    const sql = await getSql();
-    await garantirColunas(sql);
-    if (!equipeId) {
-      const linhas = await sql.query<Linha>(
-        `select ${SELECT_ADMIN}
-         from processos_admin p
-         left join "user" u on u.id = p.user_id
-         where p.user_id = $1 and p.team_id is null
-         order by p.encerramento asc`,
-        [context.userId],
-      );
-      return linhas.map(linhaParaAdmin);
-    }
-    const membro = await sql<{ ok: number }>`
-      select 1 as ok from equipe_membros where equipe_id = ${equipeId} and user_id = ${context.userId}
-    `;
-    if (!membro.length) throw new Error("Você não faz parte desta equipe.");
-    const linhas = await sql.query<Linha>(
-      `select ${SELECT_ADMIN}
-       from processos_admin p
-       left join "user" u on u.id = p.user_id
-       where p.team_id = $1
-       order by p.encerramento asc`,
-      [equipeId],
-    );
-    return linhas.map(linhaParaAdmin);
-  });
+  .handler(async ({ context, data: equipeId }) => adminDaConta(context.userId, equipeId));
 
 export const salvarAdmin = createServerFn({ method: "POST" })
   .validator(exigirAdmin)

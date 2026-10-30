@@ -37,6 +37,10 @@ async function aceitarConvites(userId: string) {
   const eu = await sql<{ email: string }>`select email from "user" where id = ${userId}`;
   const email = eu[0]?.email?.toLowerCase();
   if (!email) return;
+  const pendentes = await sql<{ equipe_id: string }>`
+    select equipe_id from equipe_convites where lower(email) = ${email} limit 1
+  `;
+  if (!pendentes.length) return;
   await sql`
     insert into equipe_membros (equipe_id, user_id, papel)
     select c.equipe_id, ${userId}, 'membro'
@@ -47,61 +51,63 @@ async function aceitarConvites(userId: string) {
   await sql`delete from equipe_convites where lower(email) = ${email}`;
 }
 
+export async function equipesDaConta(userId: string) {
+  await aceitarConvites(userId);
+  const sql = await getSql();
+  const linhas = await sql<{
+    equipe_id: string;
+    nome: string;
+    meu_papel: string;
+    user_id: string;
+    name: string;
+    email: string;
+    papel: string;
+  }>`
+    select e.id as equipe_id, e.nome, meu.papel as meu_papel,
+           m.user_id, u.name, u.email, m.papel
+    from equipe_membros meu
+    join equipes e on e.id = meu.equipe_id
+    join equipe_membros m on m.equipe_id = e.id
+    join "user" u on u.id = m.user_id
+    where meu.user_id = ${userId}
+    order by e.nome, u.name
+  `;
+  const convites = await sql<{ equipe_id: string; email: string }>`
+    select c.equipe_id, c.email
+    from equipe_convites c
+    join equipe_membros meu on meu.equipe_id = c.equipe_id
+    where meu.user_id = ${userId} and meu.papel = 'dono'
+    order by c.email
+  `;
+  const mapa = new Map<string, Equipe>();
+  for (const linha of linhas) {
+    let equipe = mapa.get(linha.equipe_id);
+    if (!equipe) {
+      equipe = {
+        id: linha.equipe_id,
+        nome: linha.nome,
+        papel: papelOk(linha.meu_papel),
+        membros: [],
+        convites: [],
+      };
+      mapa.set(linha.equipe_id, equipe);
+    }
+    equipe.membros.push({
+      userId: linha.user_id,
+      nome: linha.name,
+      email: linha.email,
+      papel: papelOk(linha.papel),
+    });
+  }
+  for (const convite of convites) {
+    mapa.get(convite.equipe_id)?.convites.push(convite.email);
+  }
+  return [...mapa.values()];
+}
+
 export const listarEquipes = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
-  .handler(async ({ context }) => {
-    await aceitarConvites(context.userId);
-    const sql = await getSql();
-    const linhas = await sql<{
-      equipe_id: string;
-      nome: string;
-      meu_papel: string;
-      user_id: string;
-      name: string;
-      email: string;
-      papel: string;
-    }>`
-      select e.id as equipe_id, e.nome, meu.papel as meu_papel,
-             m.user_id, u.name, u.email, m.papel
-      from equipe_membros meu
-      join equipes e on e.id = meu.equipe_id
-      join equipe_membros m on m.equipe_id = e.id
-      join "user" u on u.id = m.user_id
-      where meu.user_id = ${context.userId}
-      order by e.nome, u.name
-    `;
-    const convites = await sql<{ equipe_id: string; email: string }>`
-      select c.equipe_id, c.email
-      from equipe_convites c
-      join equipe_membros meu on meu.equipe_id = c.equipe_id
-      where meu.user_id = ${context.userId} and meu.papel = 'dono'
-      order by c.email
-    `;
-    const mapa = new Map<string, Equipe>();
-    for (const linha of linhas) {
-      let equipe = mapa.get(linha.equipe_id);
-      if (!equipe) {
-        equipe = {
-          id: linha.equipe_id,
-          nome: linha.nome,
-          papel: papelOk(linha.meu_papel),
-          membros: [],
-          convites: [],
-        };
-        mapa.set(linha.equipe_id, equipe);
-      }
-      equipe.membros.push({
-        userId: linha.user_id,
-        nome: linha.name,
-        email: linha.email,
-        papel: papelOk(linha.papel),
-      });
-    }
-    for (const convite of convites) {
-      mapa.get(convite.equipe_id)?.convites.push(convite.email);
-    }
-    return [...mapa.values()];
-  });
+  .handler(async ({ context }) => equipesDaConta(context.userId));
 
 export const criarEquipe = createServerFn({ method: "POST" })
   .validator((nome: unknown) => {

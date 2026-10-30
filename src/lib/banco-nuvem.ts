@@ -1,4 +1,4 @@
-import { get, put } from "@vercel/blob";
+import { get, head, put } from "@vercel/blob";
 
 /**
  * Cópia durável do PGLite. Sem DATABASE_URL cada função da Vercel nascia com o
@@ -22,20 +22,62 @@ export function nuvemConfigurada() {
   return Boolean(token());
 }
 
-function nomeDoErro(err: unknown) {
-  return err && typeof err === "object" && "name" in err ? String(err.name) : "";
+function classeDoErro(err: unknown) {
+  if (!err || typeof err !== "object") return "";
+  return (err as { constructor?: { name?: string } }).constructor?.name ?? "";
 }
 
 function statusDoErro(err: unknown) {
   return err && typeof err === "object" && "status" in err ? Number(err.status) : 0;
 }
 
+function mensagemDoErro(err: unknown) {
+  if (!err || typeof err !== "object" || !("message" in err)) return "";
+  return String((err as { message: unknown }).message);
+}
+
 function naoAchei(err: unknown) {
-  return nomeDoErro(err) === "BlobNotFoundError" || statusDoErro(err) === 404;
+  const classe = classeDoErro(err);
+  if (classe === "BlobNotFoundError" || statusDoErro(err) === 404) return true;
+  const msg = mensagemDoErro(err).toLowerCase();
+  return msg.includes("does not exist") || msg.includes("not found");
 }
 
 export function conflitoDeGravacao(err: unknown) {
-  return nomeDoErro(err) === "BlobPreconditionFailedError" || statusDoErro(err) === 412;
+  const classe = classeDoErro(err);
+  if (classe === "BlobPreconditionFailedError" || statusDoErro(err) === 412) return true;
+  const msg = mensagemDoErro(err).toLowerCase();
+  return msg.includes("precondition failed") || msg.includes("etag mismatch");
+}
+
+/** O ETag do download HTTP vem entre aspas (e às vezes com W/) e não serve no ifMatch. */
+function nucleoEtag(valor: string | null | undefined) {
+  if (!valor) return "";
+  let s = valor.trim();
+  if (/^W\//i.test(s)) s = s.slice(2).trim();
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) s = s.slice(1, -1);
+  return s;
+}
+
+export function mesmoEtag(a: string | null | undefined, b: string | null | undefined) {
+  const esquerda = nucleoEtag(a);
+  const direita = nucleoEtag(b);
+  return Boolean(esquerda) && esquerda === direita;
+}
+
+/** ETag da API (head/put). O do GET é de CDN e faz a Vercel recusar a escrita. */
+export async function etagAtual(): Promise<string | null> {
+  const chave = token();
+  if (!chave) return null;
+  try {
+    const meta = await head(CAMINHO, { token: chave });
+    const valor = meta.etag?.trim();
+    return valor || null;
+  } catch (err) {
+    if (naoAchei(err)) return null;
+    console.warn("[banco] não li o etag oficial", mensagemDoErro(err));
+    return null;
+  }
 }
 
 export type CopiaNuvem =
@@ -46,18 +88,19 @@ export type CopiaNuvem =
 export async function buscarCopia(etag: string | null): Promise<CopiaNuvem> {
   const chave = token();
   if (!chave) return { tipo: "ausente" };
+  const atual = await etagAtual();
+  if (atual && mesmoEtag(etag, atual)) return { tipo: "igual" };
   try {
     const resposta = await get(CAMINHO, {
       access: "private",
       token: chave,
       useCache: false,
-      ...(etag ? { ifNoneMatch: etag } : {}),
     });
-    if (!resposta) return { tipo: "ausente" };
-    if (resposta.statusCode === 304) return { tipo: "igual" };
+    if (!resposta?.stream) return { tipo: "ausente" };
     const bytes = new Uint8Array(await new Response(resposta.stream).arrayBuffer());
     if (!bytes.byteLength) return { tipo: "ausente" };
-    return { tipo: "nova", etag: resposta.blob.etag, blob: new Blob([bytes]) };
+    const etagHttp = resposta.blob.etag?.trim() || "";
+    return { tipo: "nova", etag: atual || etagHttp, blob: new Blob([bytes]) };
   } catch (err) {
     if (naoAchei(err)) return { tipo: "ausente" };
     throw err;
@@ -67,6 +110,7 @@ export async function buscarCopia(etag: string | null): Promise<CopiaNuvem> {
 export async function gravarCopia(arquivo: Blob, etag: string | null): Promise<string> {
   const chave = token();
   if (!chave) throw new Error("Armazenamento não configurado.");
+  const condicao = etag?.trim() || "";
   const salvo = await put(CAMINHO, arquivo, {
     access: "private",
     token: chave,
@@ -74,7 +118,7 @@ export async function gravarCopia(arquivo: Blob, etag: string | null): Promise<s
     addRandomSuffix: false,
     contentType: "application/gzip",
     cacheControlMaxAge: 60,
-    ...(etag ? { ifMatch: etag } : {}),
+    ...(condicao ? { ifMatch: condicao } : {}),
   });
   return salvo.etag;
 }

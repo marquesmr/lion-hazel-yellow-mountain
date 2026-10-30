@@ -255,6 +255,7 @@ export async function marcarPresencaDe(userId: string) {
     values (${userId}, ${nome}, ${email}, now())
     on conflict (user_id) do update
       set nome = excluded.nome, email = excluded.email, visto_em = now()
+      where presenca.visto_em < now() - interval '90 seconds'
   `;
 }
 

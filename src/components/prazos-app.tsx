@@ -60,11 +60,13 @@ import { TrocaSenhaPerfil } from "@/components/troca-senha";
 import { Timbrado, TimbradoRodape } from "@/components/timbrado";
 import { PainelEstatisticas } from "@/components/estatisticas";
 import { intervaloPeriodo, type PeriodoRelatorio } from "@/lib/admin";
+import type { ProcessoAdmin } from "@/lib/admin";
 import { AdminPainel } from "@/components/admin-painel";
 import { AjudaFlutuante } from "@/components/ajuda-flutuante";
 import { CampoMes } from "@/components/campo-mes";
 import { BotaoRelatorio } from "@/components/botao-relatorio";
-import { listarAbas, marcarPresenca, estadoSistema, consultarExclusao, abrirGestaoPelaConta } from "@/lib/gestao.functions";
+import { marcarPresenca, estadoSistema, consultarExclusao, abrirGestaoPelaConta } from "@/lib/gestao.functions";
+import { carregarInicio } from "@/lib/inicio.functions";
 import { AvisoContaExcluida } from "@/components/aviso-exclusao";
 import { signOut } from "@/lib/auth/client";
 import { BotaoConfiguracoes } from "@/components/configuracoes";
@@ -201,7 +203,8 @@ function PranchetaGrafico({ className }: { className?: string }) {
 
 export function PrazosApp() {
   const { user, isPending } = useCurrentUserState();
-  const autenticador = useExigirAutenticador(Boolean(user));
+  const [navegador, setNavegador] = useState<{ confiado: boolean; ativo: boolean; expiraEm: string | null } | null>(null);
+  const autenticador = useExigirAutenticador(Boolean(user), navegador);
   const irPara = useNavigate();
   const [ready, setReady] = useState(false);
   const [contaId, setContaId] = useState<string | null>(null);
@@ -228,6 +231,9 @@ export function PrazosApp() {
   const [equipeAtual, setEquipeAtual] = useState<string | null>(null);
   const [tipoAba, setTipoAba] = useState<string>("todos");
   const [abasLeg, setAbasLeg] = useState<string[]>([...TIPOS]);
+  const [abasAdm, setAbasAdm] = useState<string[]>([]);
+  const [adminLista, setAdminLista] = useState<ProcessoAdmin[]>([]);
+  const [cargaId, setCargaId] = useState(0);
   const [ordemCampo, setOrdemCampo] = useState<OrdemCampo>("numero");
   const [ordemDir, setOrdemDir] = useState<"asc" | "desc">("asc");
   const [guia, setGuia] = useState<Guia>("lista");
@@ -274,6 +280,7 @@ export function PrazosApp() {
   }, []);
 
   useEffect(() => {
+    if (!user?.id || !ready) return;
     let vivo = true;
     const ler = () => {
       void estadoSistema()
@@ -287,16 +294,15 @@ export function PrazosApp() {
         })
         .catch(() => undefined);
     };
-    ler();
     const id = window.setInterval(ler, 30_000);
     return () => {
       vivo = false;
       window.clearInterval(id);
     };
-  }, [user?.id]);
+  }, [user?.id, ready]);
 
   useEffect(() => {
-    if (!user?.id) return;
+    if (!user?.id || !ready) return;
     let vivo = true;
     const ler = () => {
       void consultarExclusao({ data: { userId: user.id } })
@@ -309,13 +315,12 @@ export function PrazosApp() {
         })
         .catch(() => undefined);
     };
-    ler();
     const id = window.setInterval(ler, 3000);
     return () => {
       vivo = false;
       window.clearInterval(id);
     };
-  }, [user?.id]);
+  }, [user?.id, ready]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -332,19 +337,20 @@ export function PrazosApp() {
       }
     }
     const equipeId = equipeAtual;
-    if (contaId !== usuarioId) setReady(false);
-    setProcessos([]);
+    if (contaId !== usuarioId) {
+      setReady(false);
+      setNavegador(null);
+    }
+    const token = localStorage.getItem("prazos.navegador") ?? "";
     (async () => {
       try {
-        const minhas = await listarEquipes();
+        const pacote = await carregarInicio({ data: { equipeId, token } });
         if (cancelado) return;
-        setEquipes(minhas);
-        const aindaExiste = equipeId === null || minhas.some((equipe) => equipe.id === equipeId);
-        const alvo = aindaExiste ? equipeId : null;
-        if (!aindaExiste) setEquipeAtual(null);
-        let lista = await listarProcessos({ data: alvo });
+        setEquipes(pacote.equipes);
+        if (pacote.equipeId !== equipeId) setEquipeAtual(pacote.equipeId);
+        let lista = pacote.processos;
         const marca = `prazos.importado.${usuarioId}`;
-        if (!alvo && lista.length === 0 && localStorage.getItem(marca) !== "1") {
+        if (!pacote.equipeId && lista.length === 0 && localStorage.getItem(marca) !== "1") {
           const locais = lerProcessosLocais();
           for (const item of locais) await salvarProcesso({ data: { ...item, equipeId: null } });
           if (locais.length) lista = await listarProcessos({ data: null });
@@ -352,13 +358,29 @@ export function PrazosApp() {
           if (!cancelado && locais.length) setToast("Processos deste navegador foram salvos na sua conta.");
         }
         if (cancelado) return;
-        const comAno = garantirAno(lista);
-        setProcessos(comAno);
+        setProcessos(garantirAno(lista));
+        setAdminLista(pacote.administrativos);
+        setCargaId((valor) => valor + 1);
+        if (pacote.abas.legislativo.length) setAbasLeg(pacote.abas.legislativo);
+        setAbasAdm(pacote.abas.administrativo);
+        definirSemExpediente(pacote.estado.datas);
+        setSouGestor(Boolean(pacote.estado.administrador));
+        if (pacote.estado.bloqueado) setTrava("Seu acesso está bloqueado.");
+        else if (pacote.estado.manutencao && !pacote.estado.administrador) setTrava("O sistema está em manutenção. Tente de novo mais tarde.");
+        else setTrava(null);
+        if (pacote.exclusao.excluida && !exclusaoVista.current) {
+          sessionStorage.setItem("prazos.conta-excluida", "1");
+          sessionStorage.setItem("prazos.exclusao-motivo", pacote.exclusao.motivo);
+          setMotivoExclusaoId(pacote.exclusao.motivo);
+          setExcluida(true);
+        }
+        setNavegador(pacote.navegador);
         setContaId(usuarioId);
         setReady(true);
       } catch {
         if (cancelado) return;
         setProcessos([]);
+        setNavegador({ confiado: false, ativo: false, expiraEm: null });
         setContaId(usuarioId);
         setToast("Não foi possível carregar seus processos.");
         setReady(true);
@@ -389,15 +411,6 @@ export function PrazosApp() {
     const id = window.setInterval(bater, 20_000);
     return () => window.clearInterval(id);
   }, [user?.id, ready]);
-
-  useEffect(() => {
-    if (!user?.id) return;
-    void listarAbas()
-      .then((lista) => {
-        if (lista.legislativo.length) setAbasLeg(lista.legislativo);
-      })
-      .catch(() => undefined);
-  }, [user?.id]);
 
   const abasTipo = [
     { id: "todos", label: "Todos" },
@@ -928,7 +941,16 @@ export function PrazosApp() {
       </div>
 
       {area === "administrativo" ? (
-        <AdminPainel equipeAtual={equipeAtual} equipes={equipes} meuNome={meuNome} sinalNovo={0} onToast={setToast}>
+        <AdminPainel
+          equipeAtual={equipeAtual}
+          equipes={equipes}
+          meuNome={meuNome}
+          sinalNovo={0}
+          onToast={setToast}
+          processosIniciais={adminLista}
+          cargaId={cargaId}
+          abasIniciais={abasAdm}
+        >
           <PainelEquipe
             equipes={equipes}
             atual={equipeAtual}

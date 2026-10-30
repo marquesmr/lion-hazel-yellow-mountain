@@ -146,39 +146,41 @@ async function emitirNavegador(sql: Awaited<ReturnType<typeof getSql>>, userId: 
   return token;
 }
 
+export async function situacaoDoNavegador(userId: string, token: string) {
+  const sql = await getSql();
+  const isentos = await sql<{ isento_2fa: boolean }>`
+    select isento_2fa from usuario_perfil where user_id = ${userId}
+  `;
+  if (isentos[0]?.isento_2fa === true) {
+    return { confiado: true, ativo: false, expiraEm: null as string | null };
+  }
+  await tabelaNavegador(sql);
+  const linhas = await sql<{ confirmado: boolean }>`
+    select confirmado from autenticador where user_id = ${userId}
+  `;
+  const ativo = linhas[0]?.confirmado === true;
+  if (!token) return { confiado: false, ativo, expiraEm: null as string | null };
+  const { createHash } = await import("node:crypto");
+  const hash = createHash("sha256").update(token).digest("hex");
+  const confianca = await sql<{ expira_em: string }>`
+    select expira_em from navegador_confiado
+    where user_id = ${userId} and token_hash = ${hash} and expira_em > now()
+    limit 1
+  `;
+  return {
+    confiado: confianca.length > 0,
+    ativo,
+    expiraEm: confianca[0] ? String(confianca[0].expira_em) : null,
+  };
+}
+
 export const situacaoNavegador = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: unknown) => {
     const token = input && typeof input === "object" ? (input as { token?: unknown }).token : "";
     return { token: typeof token === "string" && /^[a-f0-9]{64}$/.test(token) ? token : "" };
   })
-  .handler(async ({ context, data }) => {
-    const sql = await getSql();
-    const isentos = await sql<{ isento_2fa: boolean }>`
-      select isento_2fa from usuario_perfil where user_id = ${context.userId}
-    `;
-    if (isentos[0]?.isento_2fa === true) {
-      return { confiado: true, ativo: false, expiraEm: null as string | null };
-    }
-    await tabelaNavegador(sql);
-    const linhas = await sql<{ confirmado: boolean }>`
-      select confirmado from autenticador where user_id = ${context.userId}
-    `;
-    const ativo = linhas[0]?.confirmado === true;
-    if (!data.token) return { confiado: false, ativo, expiraEm: null as string | null };
-    const { createHash } = await import("node:crypto");
-    const hash = createHash("sha256").update(data.token).digest("hex");
-    const confianca = await sql<{ expira_em: string }>`
-      select expira_em from navegador_confiado
-      where user_id = ${context.userId} and token_hash = ${hash} and expira_em > now()
-      limit 1
-    `;
-    return {
-      confiado: confianca.length > 0,
-      ativo,
-      expiraEm: confianca[0] ? String(confianca[0].expira_em) : null,
-    };
-  });
+  .handler(async ({ context, data }) => situacaoDoNavegador(context.userId, data.token));
 
 export const autorizarNavegador = createServerFn({ method: "POST" })
   .middleware([authMiddleware])

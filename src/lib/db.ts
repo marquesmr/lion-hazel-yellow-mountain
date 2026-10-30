@@ -2,6 +2,7 @@ import { pendingMigrations } from "../../scripts/migration-plan.mjs";
 import {
   buscarCopia,
   conflitoDeGravacao,
+  etagAtual,
   gravarCopia,
   nuvemConfigurada,
 } from "./banco-nuvem";
@@ -251,13 +252,23 @@ function exclusivo<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 function mutacao(text: string) {
-  const s = text
+  const s = textoSql(text);
+  if (/^(insert|update|delete|alter|drop|truncate)\b/.test(s)) return true;
+  return /^with\b/.test(s) && /\b(insert|update|delete)\b/.test(s);
+}
+
+function gravaDados(text: string) {
+  const s = textoSql(text);
+  if (/^(insert|update|delete)\b/.test(s)) return true;
+  return /^with\b/.test(s) && /\b(insert|update|delete)\b/.test(s);
+}
+
+function textoSql(text: string) {
+  return text
     .replace(/\/\*[\s\S]*?\*\//g, " ")
     .replace(/--[^\n]*/g, " ")
     .trim()
     .toLowerCase();
-  if (/^(insert|update|delete|alter|drop|truncate)\b/.test(s)) return true;
-  return /^with\b/.test(s) && /\b(insert|update|delete)\b/.test(s);
 }
 
 async function criarPglite(carga?: Blob) {
@@ -310,7 +321,9 @@ async function aplicarCopia(etag: string, blob: Blob) {
   console.info("[banco] snapshot carregado");
 }
 
-async function alinharComNuvem() {
+const INTERVALO_NUVEM_MS = 8_000;
+
+async function alinharComNuvem(forcar = false) {
   const estado = estadoBanco();
   if (estado.suspenso > 0 && estado.pg && estado.migrado) return;
   if (!nuvemConfigurada()) {
@@ -321,7 +334,9 @@ async function alinharComNuvem() {
     }
     return;
   }
-  const fresco = !estado.pg || Date.now() - estado.ultimoCheck >= 400;
+  // Leitura reutiliza a cópia da memória. Só consulta a nuvem de tempos em
+  // tempos, ou na hora de gravar, para não baixar o banco a cada clique.
+  const fresco = forcar || !estado.pg || Date.now() - estado.ultimoCheck >= INTERVALO_NUVEM_MS;
   if (fresco) {
     const copia = await buscarCopia(estado.etag);
     estado.ultimoCheck = Date.now();
@@ -340,18 +355,13 @@ async function alinharComNuvem() {
 async function gravarUmaVez() {
   const estado = estadoBanco();
   if (!estado.pg || !nuvemConfigurada()) return;
-  let condicao = estado.etag;
-  if (!estado.forcar) {
-    const atual = await buscarCopia(estado.etag);
-    if (atual.tipo === "nova" && atual.etag !== estado.etag) {
-      await aplicarCopia(atual.etag, atual.blob);
-      return;
-    }
-    if (atual.tipo === "ausente") condicao = null;
-  }
-  const arquivo = await estado.pg.dumpDataDir("gzip");
+  const pg = estado.pg;
+  const [condicao, arquivo] = await Promise.all([
+    estado.forcar ? Promise.resolve(null) : etagAtual(),
+    pg.dumpDataDir("gzip"),
+  ]);
   try {
-    estado.etag = await gravarCopia(arquivo, estado.forcar ? null : condicao);
+    estado.etag = await gravarCopia(arquivo, condicao);
     estado.ultimoCheck = Date.now();
     console.info("[banco] snapshot guardado");
   } catch (err) {
@@ -359,10 +369,16 @@ async function gravarUmaVez() {
       console.error("[banco] falha ao guardar", err);
       throw err;
     }
-    const nova = await buscarCopia(null);
-    if (nova.tipo === "nova") await aplicarCopia(nova.etag, nova.blob);
     if (estado.forcar) {
       throw new Error("A restauração cruzou com outra gravação. Restaure o arquivo de novo.");
+    }
+    try {
+      estado.etag = await gravarCopia(arquivo, null);
+      estado.ultimoCheck = Date.now();
+      console.warn("[banco] conflito de etag; snapshot gravado sem condição");
+    } catch (err2) {
+      console.error("[banco] falha ao guardar", err2);
+      throw new Error("Não foi possível guardar os dados agora. Tente de novo em instantes.");
     }
   }
 }
@@ -396,11 +412,11 @@ export async function consultarPglite<T = Record<string, unknown>>(
   let copiar = false;
   const resultado = await exclusivo(async () => {
     const estado = estadoBanco();
-    if (estado.tx === 0) await alinharComNuvem();
+    if (estado.tx === 0) await alinharComNuvem(gravaDados(text));
     const pg = estado.pg;
     if (!pg) throw new Error("Banco indisponível.");
     const resposta = await pg.query<T>(text, params);
-    if (mutacao(text)) {
+    if (mutacao(text) && (resposta.affectedRows ?? 1) > 0) {
       if (estado.tx > 0) estado.sujou = true;
       else if (estado.suspenso === 0) copiar = true;
     }
@@ -412,7 +428,7 @@ export async function consultarPglite<T = Record<string, unknown>>(
 
 export async function iniciarTransacaoPglite() {
   await exclusivo(async () => {
-    await alinharComNuvem();
+    await alinharComNuvem(true);
     estadoBanco().tx += 1;
   });
 }

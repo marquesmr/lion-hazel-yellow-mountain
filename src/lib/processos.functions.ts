@@ -207,6 +207,35 @@ function linhaParaProcesso(linha: Linha): Processo {
   };
 }
 
+export async function processosDaConta(userId: string, equipeId: string | null) {
+  const sql = await getSql();
+  await garantirColunas(sql);
+  if (!equipeId) {
+    const linhas = await sql.query<Linha>(
+      `select ${SELECT_PROC}
+       from processos p
+       left join "user" u on u.id = p.user_id
+       where p.user_id = $1 and p.team_id is null
+       order by p.prazo asc`,
+      [userId],
+    );
+    return linhas.map(linhaParaProcesso);
+  }
+  const membro = await sql<{ ok: number }>`
+    select 1 as ok from equipe_membros where equipe_id = ${equipeId} and user_id = ${userId}
+  `;
+  if (!membro.length) throw new Error("Você não faz parte desta equipe.");
+  const linhas = await sql.query<Linha>(
+    `select ${SELECT_PROC}
+     from processos p
+     left join "user" u on u.id = p.user_id
+     where p.team_id = $1
+     order by p.prazo asc`,
+    [equipeId],
+  );
+  return linhas.map(linhaParaProcesso);
+}
+
 export const listarProcessos = createServerFn({ method: "GET" })
   .validator((equipeId: unknown) => {
     if (equipeId == null || equipeId === "") return null;
@@ -214,34 +243,7 @@ export const listarProcessos = createServerFn({ method: "GET" })
     return equipeId.trim().slice(0, 80);
   })
   .middleware([authMiddleware])
-  .handler(async ({ context, data: equipeId }) => {
-    const sql = await getSql();
-    await garantirColunas(sql);
-    if (!equipeId) {
-      const linhas = await sql.query<Linha>(
-        `select ${SELECT_PROC}
-         from processos p
-         left join "user" u on u.id = p.user_id
-         where p.user_id = $1 and p.team_id is null
-         order by p.prazo asc`,
-        [context.userId],
-      );
-      return linhas.map(linhaParaProcesso);
-    }
-    const membro = await sql<{ ok: number }>`
-      select 1 as ok from equipe_membros where equipe_id = ${equipeId} and user_id = ${context.userId}
-    `;
-    if (!membro.length) throw new Error("Você não faz parte desta equipe.");
-    const linhas = await sql.query<Linha>(
-      `select ${SELECT_PROC}
-       from processos p
-       left join "user" u on u.id = p.user_id
-       where p.team_id = $1
-       order by p.prazo asc`,
-      [equipeId],
-    );
-    return linhas.map(linhaParaProcesso);
-  });
+  .handler(async ({ context, data: equipeId }) => processosDaConta(context.userId, equipeId));
 
 export const salvarProcesso = createServerFn({ method: "POST" })
   .validator(exigirProcesso)

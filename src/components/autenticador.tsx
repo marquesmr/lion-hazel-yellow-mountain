@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Scale } from "lucide-react";
 import { signOut } from "@/lib/auth/client";
-import { autorizarNavegador, confirmarAutenticador, estadoAutenticador, iniciarAutenticador, situacaoNavegador } from "@/lib/auth/autenticador.functions";
+import { autorizarNavegador, confirmarAutenticador, estadoAutenticador, iniciarAutenticador } from "@/lib/auth/autenticador.functions";
 
 const campo = "h-11 w-full rounded-xl border border-line bg-paper px-3 text-sm font-normal text-ink";
 
@@ -31,7 +31,10 @@ export function guardarNavegador(token: string) {
   localStorage.setItem(CHAVE_NAVEGADOR, token);
 }
 
-export function useExigirAutenticador(contaAtiva: boolean) {
+export function useExigirAutenticador(
+  contaAtiva: boolean,
+  previsto: { confiado: boolean; ativo: boolean; expiraEm: string | null } | null,
+) {
   const [gate, setGate] = useState<"checando" | "ok" | "exigir" | "codigo">("checando");
 
   useEffect(() => {
@@ -39,35 +42,21 @@ export function useExigirAutenticador(contaAtiva: boolean) {
       setGate("checando");
       return;
     }
-    let vivo = true;
+    if (!previsto) return;
     let timer = 0;
-    const ler = () => {
-      const token = localStorage.getItem(CHAVE_NAVEGADOR) ?? "";
-      void situacaoNavegador({ data: { token } })
-        .then((estado) => {
-          if (!vivo) return;
-          if (estado.confiado) {
-            setGate("ok");
-            if (estado.expiraEm) {
-              const falta = new Date(estado.expiraEm).getTime() - Date.now();
-              const dozeHoras = 12 * 60 * 60 * 1000;
-              timer = window.setTimeout(ler, Math.max(1000, Math.min(falta, dozeHoras)));
-            }
-            return;
-          }
-          localStorage.removeItem(CHAVE_NAVEGADOR);
-          setGate(estado.ativo ? "codigo" : "exigir");
-        })
-        .catch(() => {
-          if (vivo) setGate("exigir");
-        });
-    };
-    ler();
-    return () => {
-      vivo = false;
-      window.clearTimeout(timer);
-    };
-  }, [contaAtiva]);
+    if (previsto.confiado) {
+      setGate("ok");
+      if (previsto.expiraEm) {
+        const falta = new Date(previsto.expiraEm).getTime() - Date.now();
+        if (falta <= 0) setGate("codigo");
+        else timer = window.setTimeout(() => setGate("codigo"), falta);
+      }
+      return () => window.clearTimeout(timer);
+    }
+    localStorage.removeItem(CHAVE_NAVEGADOR);
+    setGate(previsto.ativo ? "codigo" : "exigir");
+    return () => window.clearTimeout(timer);
+  }, [contaAtiva, previsto]);
 
   return {
     gate,

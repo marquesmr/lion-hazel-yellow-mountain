@@ -41,7 +41,6 @@ import {
 import { apagarAdmin, listarAdmin, moverAdmin, salvarAdmin } from "@/lib/admin.functions";
 import { BotaoRelatorio } from "@/components/botao-relatorio";
 import { CampoMes } from "@/components/campo-mes";
-import { listarAbas } from "@/lib/gestao.functions";
 import { SoltarProcessoContext } from "@/components/soltar-processo";
 import { GraficoAdmin } from "@/components/admin-grafico";
 import { Timbrado, TimbradoRodape } from "@/components/timbrado";
@@ -429,6 +428,9 @@ export function AdminPainel({
   meuNome,
   sinalNovo,
   onToast,
+  processosIniciais,
+  cargaId,
+  abasIniciais,
   children,
 }: {
   equipeAtual: string | null;
@@ -436,15 +438,18 @@ export function AdminPainel({
   meuNome: string;
   sinalNovo: number;
   onToast: (mensagem: string) => void;
+  processosIniciais: ProcessoAdmin[];
+  cargaId: number;
+  abasIniciais: string[];
   children: ReactNode;
 }) {
   const { user } = useCurrentUserState();
-  const [lista, setLista] = useState<ProcessoAdmin[]>([]);
-  const [pronto, setPronto] = useState(false);
+  const [lista, setLista] = useState<ProcessoAdmin[]>(processosIniciais);
+  const [pronto, setPronto] = useState(cargaId > 0);
   const [guia, setGuia] = useState<GuiaAdmin>("lista");
   const [filtro, setFiltro] = useState<FiltroAdmin>("todos");
   const [tipoAba, setTipoAba] = useState<string>("todos");
-  const [abasExtra, setAbasExtra] = useState<string[]>([]);
+  const [abasExtra, setAbasExtra] = useState<string[]>(abasIniciais);
   const [busca, setBusca] = useState("");
   const [ordemCampo, setOrdemCampo] = useState<OrdemAdmin>("numero");
   const [ordemDir, setOrdemDir] = useState<"asc" | "desc">("asc");
@@ -476,14 +481,15 @@ export function AdminPainel({
   const [relatorioPecas, setRelatorioPecas] = useState<{ rotulo: string; itens: ProcessoAdmin[] } | null>(null);
   const sinalVisto = useRef(sinalNovo);
   const listaGeracao = useRef(0);
+  const cargaVista = useRef(0);
 
   useEffect(() => {
-    void listarAbas()
-      .then((listaAbas) =>
-        setAbasExtra(listaAbas.administrativo.filter((nome) => !(MODALIDADES as readonly string[]).includes(nome))),
-      )
-      .catch(() => undefined);
-  }, [user?.id]);
+    if (cargaId === 0 || cargaVista.current === cargaId) return;
+    cargaVista.current = cargaId;
+    setLista(processosIniciais);
+    setAbasExtra(abasIniciais.filter((nome) => !(MODALIDADES as readonly string[]).includes(nome)));
+    setPronto(true);
+  }, [cargaId, processosIniciais, abasIniciais]);
 
   useEffect(() => {
     if (sinalNovo === sinalVisto.current) return;
@@ -496,32 +502,23 @@ export function AdminPainel({
   }, [sinalNovo]);
 
   useEffect(() => {
-    if (!user?.id) return;
+    if (!user?.id || cargaId === 0) return;
     let vivo = true;
-    const carregar = (silencioso: boolean) => {
+    const carregar = () => {
       const geracao = ++listaGeracao.current;
-      if (!silencioso) setPronto(false);
       void listarAdmin({ data: equipeAtual })
         .then((itens) => {
           if (!vivo || listaGeracao.current !== geracao) return;
           setLista(itens);
         })
-        .catch(() => {
-          if (!vivo || listaGeracao.current !== geracao || silencioso) return;
-          setLista([]);
-          onToast("Não foi possível carregar os processos administrativos.");
-        })
-        .finally(() => {
-          if (vivo && listaGeracao.current === geracao && !silencioso) setPronto(true);
-        });
+        .catch(() => undefined);
     };
-    carregar(false);
-    const id = window.setInterval(() => carregar(true), 30_000);
+    const id = window.setInterval(carregar, 30_000);
     return () => {
       vivo = false;
       window.clearInterval(id);
     };
-  }, [user?.id, equipeAtual, onToast]);
+  }, [user?.id, equipeAtual, cargaId]);
 
   useEffect(() => {
     setParte(0);
