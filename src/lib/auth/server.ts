@@ -138,6 +138,9 @@ const databaseUrl = env("DATABASE_URL");
 const googleClientId = env("GOOGLE_CLIENT_ID");
 const googleClientSecret = env("GOOGLE_CLIENT_SECRET");
 const googleDireto = Boolean(googleClientId && googleClientSecret);
+const xClientId = env("TWITTER_CLIENT_ID");
+const xClientSecret = env("TWITTER_CLIENT_SECRET");
+const xDireto = Boolean(xClientId && xClientSecret);
 
 // Static broker OAuth endpoints (skip OIDC discovery on every sign-in / callback).
 // Discovery would cost an extra network hop to the broker before the popup can
@@ -210,6 +213,7 @@ export const auth = betterAuth({
         ...GROK_PROVIDERS.map((p) => p.providerId),
         GATE_PROVIDER_ID,
         "google",
+        "twitter",
       ],
       // X's synthetic email is never "verified", so don't gate linking on the
       // local user's email-verified state.
@@ -254,14 +258,39 @@ export const auth = betterAuth({
 
   // Local email/password — toggled only via `./email-password` (not a plugin).
   ...(emailAndPasswordEnabled ? { emailAndPassword } : {}),
-  ...(googleDireto
+  ...(googleDireto || xDireto
     ? {
         socialProviders: {
-          google: {
-            clientId: googleClientId as string,
-            clientSecret: googleClientSecret as string,
-            prompt: "select_account",
-          },
+          ...(googleDireto
+            ? {
+                google: {
+                  clientId: googleClientId as string,
+                  clientSecret: googleClientSecret as string,
+                  prompt: "select_account",
+                },
+              }
+            : {}),
+          ...(xDireto
+            ? {
+                twitter: {
+                  clientId: xClientId as string,
+                  clientSecret: xClientSecret as string,
+                  // O aplicativo do X está sem permissão de e-mail. Pedir
+                  // users.email faz o X recusar o login.
+                  disableDefaultScope: true,
+                  scope: ["users.read", "tweet.read", "offline.access"],
+                  mapProfileToUser: (perfil: { data?: { id?: string; name?: string; username?: string; email?: string } }) => {
+                    const dados = perfil.data;
+                    const emailReal = dados?.email?.includes("@") ? dados.email : "";
+                    return {
+                      name: dados?.name || dados?.username || "Conta X",
+                      email: emailReal || `${dados?.id || "conta"}@x.auxilialegis.online`,
+                      emailVerified: Boolean(emailReal),
+                    };
+                  },
+                },
+              }
+            : {}),
         },
       }
     : {}),

@@ -156,6 +156,17 @@ export async function signIn(
     return;
   }
 
+  if (providerId === "grok-x") {
+    const { data, error } = await authClient.signIn.social({
+      provider: "twitter",
+      callbackURL,
+      errorCallbackURL,
+    });
+    if (error) throw new Error(error.message ?? "Não foi possível entrar com o X.");
+    if (data?.url) window.location.href = data.url;
+    return;
+  }
+
   const { data, error } = await authClient.signIn.oauth2({
     providerId,
     callbackURL,
