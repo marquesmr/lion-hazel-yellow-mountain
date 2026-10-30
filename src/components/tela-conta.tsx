@@ -362,7 +362,12 @@ export function TelaConta() {
           <button
             key={provedor.providerId}
             type="button"
-            onClick={() => signIn(provedor.providerId, { callbackURL: "/" })}
+            onClick={() => {
+              setErro("");
+              void signIn(provedor.providerId, { callbackURL: "/" }).catch((falha) => {
+                setErro(falha instanceof Error ? falha.message : "Não foi possível entrar.");
+              });
+            }}
             className="inline-flex h-12 items-center justify-center rounded-xl border border-line bg-sheet text-sm font-medium text-ink"
           >
             Continuar com {provedor.label}
