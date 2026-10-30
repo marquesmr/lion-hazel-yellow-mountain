@@ -13,6 +13,7 @@ import {
   abrirSistemaGestao,
 } from "@/lib/gestao.functions";
 import { SecaoSistema, SecaoUsuarios } from "@/components/gestao-extra";
+import { CampoSenha } from "@/components/campo-senha";
 
 export const Route = createFileRoute("/gestao")({ component: Gestao });
 
@@ -200,7 +201,7 @@ function Entrada({ erroInicial, onEntrou }: { erroInicial: string; onEntrou: (to
         </label>
         <label className="flex flex-col gap-1 text-sm font-medium text-ink">
           Senha
-          <input value={senha} onChange={(evento) => setSenha(evento.target.value)} type="password" autoComplete="current-password" className="h-11 rounded-xl border border-line bg-sheet px-3 font-normal" />
+          <CampoSenha value={senha} onChange={(evento) => setSenha(evento.target.value)} autoComplete="current-password" className="h-11 rounded-xl border border-line bg-sheet px-3 font-normal" />
         </label>
         {erro && <p className="text-sm text-seal">{erro}</p>}
         <button type="submit" disabled={enviando} className="inline-flex h-12 items-center justify-center rounded-xl bg-pine text-sm font-medium text-sheet disabled:opacity-60">
@@ -532,15 +533,15 @@ function PainelVivo({
                 </label>
                 <label className="flex flex-col gap-1 text-sm font-medium text-ink">
                   Senha atual
-                  <input value={senhaAtual} onChange={(evento) => setSenhaAtual(evento.target.value)} type="password" className="h-11 rounded-xl border border-line bg-paper px-3 font-normal" />
+                  <CampoSenha value={senhaAtual} onChange={(evento) => setSenhaAtual(evento.target.value)} className="h-11 rounded-xl border border-line bg-paper px-3 font-normal" />
                 </label>
                 <label className="flex flex-col gap-1 text-sm font-medium text-ink">
                   Nova senha
-                  <input value={senhaNova} onChange={(evento) => setSenhaNova(evento.target.value)} type="password" className="h-11 rounded-xl border border-line bg-paper px-3 font-normal" />
+                  <CampoSenha value={senhaNova} onChange={(evento) => setSenhaNova(evento.target.value)} className="h-11 rounded-xl border border-line bg-paper px-3 font-normal" />
                 </label>
                 <label className="flex flex-col gap-1 text-sm font-medium text-ink">
                   Repetir a nova senha
-                  <input value={senhaDeNovo} onChange={(evento) => setSenhaDeNovo(evento.target.value)} type="password" className="h-11 rounded-xl border border-line bg-paper px-3 font-normal" />
+                  <CampoSenha value={senhaDeNovo} onChange={(evento) => setSenhaDeNovo(evento.target.value)} className="h-11 rounded-xl border border-line bg-paper px-3 font-normal" />
                 </label>
                 <button type="submit" className="inline-flex h-11 items-center justify-center rounded-xl bg-pine text-sm font-medium text-sheet md:col-span-2">Salvar acesso</button>
               </form>

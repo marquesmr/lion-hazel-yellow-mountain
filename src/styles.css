@@ -19,6 +19,21 @@
   --radius-card: 1rem;
 }
 
+html[data-tema="escuro"] .silhueta,
+html[data-tema="auto"] .silhueta {
+  filter: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-tema="auto"] .silhueta {
+    filter: invert(1);
+  }
+}
+
+html[data-tema="escuro"] .silhueta {
+  filter: invert(1);
+}
+
 html[data-tema="escuro"] {
   color-scheme: dark;
   --color-paper: #12110e;

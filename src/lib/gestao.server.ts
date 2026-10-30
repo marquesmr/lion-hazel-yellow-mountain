@@ -416,8 +416,8 @@ export async function lerPainel() {
     left join "user" u on u.id = m.user_id
     order by e.nome asc, u.name asc
   `;
-  const config = await sql<{ manutencao: boolean; backup_em: string | null; backup_auto_em: string | null }>`
-    select manutencao, backup_em, backup_auto_em from gestao_config where id = 'principal'
+  const config = await sql<{ manutencao: boolean; backup_em: string | null; backup_auto_em: string | null; smtp_senha: string | null }>`
+    select manutencao, backup_em, backup_auto_em, smtp_senha from gestao_config where id = 'principal'
   `;
   const feriados = await sql<{ id: string; inicio: string; fim: string; nome: string; tipo: string }>`
     select id, inicio, fim, nome, tipo from feriados order by inicio asc
@@ -467,6 +467,7 @@ export async function lerPainel() {
       manutencao: Boolean(config[0]?.manutencao),
       backupEm: config[0]?.backup_em ? String(config[0].backup_em) : null,
       backupAutoEm: config[0]?.backup_auto_em ? String(config[0].backup_auto_em) : null,
+      emailPronto: Boolean(process.env.SMTP_PASS?.trim() || config[0]?.smtp_senha),
     },
     feriados: feriados.map((item) => ({ ...item, inicio: String(item.inicio).slice(0, 10), fim: String(item.fim).slice(0, 10) })),
   };
@@ -614,6 +615,7 @@ const PAPEIS = ["administrador", "operador", "consulta"] as const;
 
 async function garantirConfig(sql: Sql) {
   await sql`insert into gestao_config (id) values ('principal') on conflict (id) do nothing`;
+  await sql`alter table gestao_config add column if not exists smtp_senha text`;
   await sql`update usuario_perfil set papel = 'operador' where papel = 'secretaria'`;
 }
 
@@ -851,26 +853,41 @@ export async function listarLogs(filtro: { de: string; ate: string; texto: strin
 }
 
 async function montarBackup(sql: Sql) {
-  const [processos, processosAdmin, equipes, membros, abas, feriados, perfis] = await Promise.all([
-    sql`select * from processos`,
-    sql`select * from processos_admin`,
-    sql`select * from equipes`,
-    sql`select * from equipe_membros`,
-    sql`select * from abas_catalogo`,
-    sql`select * from feriados`,
-    sql`select * from usuario_perfil`,
-  ]);
+  const [usuarios, contas, autenticadores, processos, processosAdmin, equipes, membros, convites, abas, feriados, perfis, termos, gestaoAcesso, excluidas] =
+    await Promise.all([
+      sql`select * from "user"`,
+      sql`select "id", "accountId", "providerId", "userId", "password", "createdAt", "updatedAt" from "account"`,
+      sql`select * from autenticador`,
+      sql`select * from processos`,
+      sql`select * from processos_admin`,
+      sql`select * from equipes`,
+      sql`select * from equipe_membros`,
+      sql`select * from equipe_convites`,
+      sql`select * from abas_catalogo`,
+      sql`select * from feriados`,
+      sql`select * from usuario_perfil`,
+      sql`select * from termo_aceite`,
+      sql`select * from gestao_acesso`,
+      sql`select * from conta_excluida`,
+    ]);
   return JSON.stringify({
-    versao: 1,
+    versao: 2,
     em: new Date().toISOString(),
     aplicativo: "Auxilia Legis",
+    usuarios,
+    contas,
+    autenticadores,
     processos,
     processosAdmin,
     equipes,
     membros,
+    convites,
     abas,
     feriados,
     perfis,
+    termos,
+    gestaoAcesso,
+    excluidas,
   });
 }
 
@@ -884,9 +901,24 @@ async function guardarBackup(sql: Sql, automatico: boolean) {
   else await sql`update gestao_config set backup_em = now() where id = 'principal'`;
   await sql`
     delete from gestao_backups
-    where id in (select id from gestao_backups order by criado_em desc offset 3)
+    where id in (
+      select id from gestao_backups
+      where automatico = ${automatico}
+      order by criado_em desc
+      offset 3
+    )
   `;
   return conteudo;
+}
+
+export async function backupAoLancar() {
+  try {
+    const sql = await getSql();
+    await garantirConfig(sql);
+    await guardarBackup(sql, true);
+  } catch {
+    /* o lançamento segue mesmo se o backup não gravar */
+  }
 }
 
 async function backupAutomatico(sql: Sql) {
@@ -920,49 +952,64 @@ export async function baixarUltimoBackup() {
   };
 }
 
+async function gravarLinhas(sql: Sql, tabela: string, conflito: string[], linhas: unknown) {
+  if (!Array.isArray(linhas)) return 0;
+  let gravadas = 0;
+  for (const item of linhas) {
+    if (!item || typeof item !== "object") continue;
+    const linha = item as Record<string, unknown>;
+    const colunas = Object.keys(linha).filter((chave) => /^[a-zA-Z0-9_]+$/.test(chave));
+    if (!colunas.length) continue;
+    const valores = colunas.map((chave) => linha[chave]);
+    const lista = colunas.map((chave) => `"${chave}"`).join(", ");
+    const marcas = colunas.map((_, indice) => `$${indice + 1}`).join(", ");
+    const atualiza = colunas
+      .filter((chave) => !conflito.includes(chave))
+      .map((chave) => `"${chave}" = excluded."${chave}"`)
+      .join(", ");
+    const alvo = conflito.map((chave) => `"${chave}"`).join(", ");
+    await sql.query(
+      `insert into ${tabela} (${lista}) values (${marcas}) on conflict (${alvo}) do update set ${atualiza || conflito.map((chave) => `"${chave}" = excluded."${chave}"`).join(", ")}`,
+      valores,
+    );
+    gravadas += 1;
+  }
+  return gravadas;
+}
+
 export async function restaurarBackup(conteudo: string) {
-  if (conteudo.length > 8_000_000) throw new Error("O arquivo é grande demais.");
+  if (conteudo.length > 12_000_000) throw new Error("O arquivo é grande demais.");
   let dados: {
     versao?: number;
     processos?: Record<string, unknown>[];
     processosAdmin?: Record<string, unknown>[];
+    usuarios?: Record<string, unknown>[];
+    contas?: Record<string, unknown>[];
   };
   try {
     dados = JSON.parse(conteudo) as typeof dados;
   } catch {
     throw new Error("Arquivo de backup inválido.");
   }
-  if (dados.versao !== 1 || !Array.isArray(dados.processos) || !Array.isArray(dados.processosAdmin)) {
+  if ((dados.versao !== 1 && dados.versao !== 2) || !Array.isArray(dados.processos) || !Array.isArray(dados.processosAdmin)) {
     throw new Error("Este arquivo não é um backup do Auxilia Legis.");
   }
   const sql = await getSql();
-  for (const linha of dados.processos) {
-    if (!linha || typeof linha.id !== "string") continue;
-    const colunas = Object.keys(linha).filter((chave) => /^[a-z0-9_]+$/i.test(chave));
-    if (!colunas.includes("id")) continue;
-    const valores = colunas.map((chave) => linha[chave]);
-    const lista = colunas.map((chave) => `"${chave}"`).join(", ");
-    const marcas = colunas.map((_, indice) => `$${indice + 1}`).join(", ");
-    const atualiza = colunas.filter((chave) => chave !== "id").map((chave) => `"${chave}" = excluded."${chave}"`).join(", ");
-    await sql.query(
-      `insert into processos (${lista}) values (${marcas}) on conflict (id) do update set ${atualiza || "id = excluded.id"}`,
-      valores,
-    );
-  }
-  for (const linha of dados.processosAdmin) {
-    if (!linha || typeof linha.id !== "string") continue;
-    const colunas = Object.keys(linha).filter((chave) => /^[a-z0-9_]+$/i.test(chave));
-    if (!colunas.includes("id")) continue;
-    const valores = colunas.map((chave) => linha[chave]);
-    const lista = colunas.map((chave) => `"${chave}"`).join(", ");
-    const marcas = colunas.map((_, indice) => `$${indice + 1}`).join(", ");
-    const atualiza = colunas.filter((chave) => chave !== "id").map((chave) => `"${chave}" = excluded."${chave}"`).join(", ");
-    await sql.query(
-      `insert into processos_admin (${lista}) values (${marcas}) on conflict (id) do update set ${atualiza || "id = excluded.id"}`,
-      valores,
-    );
-  }
-  return { processos: dados.processos.length, administrativos: dados.processosAdmin.length };
+  const contas = await gravarLinhas(sql, '"user"', ["id"], dados.usuarios);
+  await gravarLinhas(sql, '"account"', ["id"], dados.contas);
+  await gravarLinhas(sql, "autenticador", ["user_id"], (dados as { autenticadores?: unknown }).autenticadores);
+  await gravarLinhas(sql, "usuario_perfil", ["user_id"], (dados as { perfis?: unknown }).perfis);
+  await gravarLinhas(sql, "termo_aceite", ["user_id"], (dados as { termos?: unknown }).termos);
+  await gravarLinhas(sql, "gestao_acesso", ["id"], (dados as { gestaoAcesso?: unknown }).gestaoAcesso);
+  await gravarLinhas(sql, "equipes", ["id"], (dados as { equipes?: unknown }).equipes);
+  await gravarLinhas(sql, "equipe_membros", ["equipe_id", "user_id"], (dados as { membros?: unknown }).membros);
+  await gravarLinhas(sql, "equipe_convites", ["equipe_id", "email"], (dados as { convites?: unknown }).convites);
+  await gravarLinhas(sql, "abas_catalogo", ["id"], (dados as { abas?: unknown }).abas);
+  await gravarLinhas(sql, "feriados", ["id"], (dados as { feriados?: unknown }).feriados);
+  await gravarLinhas(sql, "conta_excluida", ["user_id"], (dados as { excluidas?: unknown }).excluidas);
+  const processos = await gravarLinhas(sql, "processos", ["id"], dados.processos);
+  const administrativos = await gravarLinhas(sql, "processos_admin", ["id"], dados.processosAdmin);
+  return { contas, processos, administrativos };
 }
 
 export async function salvarFeriado(entrada: { nome: string; tipo: string; inicio: string; fim: string }) {
@@ -994,5 +1041,15 @@ export async function definirManutencao(ligado: boolean) {
   }
   await sql`update gestao_config set manutencao = ${ligado} where id = 'principal'`;
   return { manutencao: ligado };
+}
+
+export async function salvarSenhaCaixa(senha: string) {
+  const limpa = senha.trim();
+  if (limpa.length < 6) throw new Error("Informe a senha da caixa de e-mail.");
+  const { cifrarSenhaCaixa, EMAIL_ENVIO } = await import("./email.server");
+  const sql = await getSql();
+  await garantirConfig(sql);
+  await sql`update gestao_config set smtp_senha = ${cifrarSenhaCaixa(limpa)} where id = 'principal'`;
+  return { email: EMAIL_ENVIO };
 }
 

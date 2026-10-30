@@ -9,10 +9,12 @@ import {
   logsGestao,
   manutencaoGestao,
   restaurarGestao,
+  salvarSenhaCaixaGestao,
   vincularEquipeGestao,
 } from "@/lib/gestao.functions";
 import type { painelGestao } from "@/lib/gestao.functions";
 import { MOTIVOS_EXCLUSAO } from "@/lib/motivos-exclusao";
+import { CampoSenha } from "@/components/campo-senha";
 
 type Painel = Awaited<ReturnType<typeof painelGestao>>;
 
@@ -289,6 +291,43 @@ export function SecaoSistema({
           {painel.config.manutencao ? "Desligar manutenção" : "Colocar em manutenção"}
         </button>
       </section>
+      <section className="rounded-2xl border border-line bg-sheet p-4">
+        <h2 className="text-sm font-medium text-ink">E-mail dos códigos</h2>
+        <p className="mt-1 text-sm text-muted">
+          Os códigos de senha saem de auxilialegis@marquestecnologies.com.
+          {painel.config.emailPronto ? " A caixa já está pronta." : " Guarde a senha da caixa para o envio funcionar."}
+        </p>
+        <form
+          className="mt-3 flex flex-col gap-2 sm:flex-row"
+          onSubmit={(evento) => {
+            evento.preventDefault();
+            const dados = new FormData(evento.currentTarget);
+            const formulario = evento.currentTarget;
+            const senha = String(dados.get("senha") ?? "");
+            void (async () => {
+              onErro("");
+              try {
+                await salvarSenhaCaixaGestao({ data: { token, senha } });
+                onAviso("Senha da caixa guardada.");
+                formulario.reset();
+                onMudou();
+              } catch (err) {
+                onErro(err instanceof Error ? err.message : "Não foi possível guardar a senha.");
+              }
+            })();
+          }}
+        >
+          <CampoSenha
+            name="senha"
+            autoComplete="new-password"
+            placeholder="Senha da caixa"
+            className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-paper px-3 text-sm text-ink"
+          />
+          <button type="submit" className="inline-flex h-11 items-center justify-center rounded-xl bg-pine px-4 text-sm font-medium text-sheet">
+            Guardar
+          </button>
+        </form>
+      </section>
 
       <section className="rounded-2xl border border-line bg-sheet p-4">
         <h2 className="text-sm font-medium text-ink">Feriados e recesso</h2>
@@ -339,7 +378,7 @@ export function SecaoSistema({
       <section className="rounded-2xl border border-line bg-sheet p-4">
         <h2 className="text-sm font-medium text-ink">Backup</h2>
         <p className="mt-1 text-sm text-muted">
-          Último manual: {hora(painel.config.backupEm)}. Último automático: {hora(painel.config.backupAutoEm)}. O automático ocorre uma vez por dia, quando esta área é aberta.
+          Último manual: {hora(painel.config.backupEm)}. Último automático: {hora(painel.config.backupAutoEm)}. O automático ocorre a cada novo lançamento. O arquivo inclui as contas.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           <button
@@ -367,11 +406,11 @@ export function SecaoSistema({
                 const arquivo = evento.target.files?.[0];
                 evento.target.value = "";
                 if (!arquivo) return;
-                if (!window.confirm("Restaurar este backup? Os processos com o mesmo identificador serão substituídos.")) return;
+                if (!window.confirm("Restaurar este backup? Contas, senhas e processos deste arquivo passam a valer aqui.")) return;
                 void arquivo.text().then((conteudo) =>
                   restaurarGestao({ data: { token, conteudo } })
                     .then((resultado) => {
-                      onAviso(`Restaurados ${resultado.processos} legislativos e ${resultado.administrativos} administrativos.`);
+                      onAviso(`Restauradas ${resultado.contas} contas, ${resultado.processos} legislativos e ${resultado.administrativos} administrativos.`);
                       onMudou();
                     })
                     .catch((err: unknown) => onErro(err instanceof Error ? err.message : "Não foi possível restaurar.")),

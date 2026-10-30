@@ -3,6 +3,7 @@ import { createAuthClient } from "better-auth/react";
 import { runPreSignInSignOut, runSignOut } from "../../../scripts/sign-out-plan.mjs";
 import { GROK_PROVIDERS } from "./providers";
 import { soltarTemaDaConta } from "@/lib/preferencias";
+import { liberarProximoAcesso } from "@/lib/lembrar-acesso";
 
 /**
  * Better Auth client for this React SPA (browser-side).
@@ -232,6 +233,7 @@ export async function signOut(redirectTo = "/"): Promise<void> {
     clearToken: () => setBearerToken(null),
     redirect: () => {
       soltarTemaDaConta();
+      liberarProximoAcesso();
       window.location.href = redirectTo;
     },
   });

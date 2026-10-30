@@ -55,7 +55,7 @@ import { apagarProcesso, listarProcessos, moverProcesso, salvarProcesso } from "
 import { SoltarProcessoContext } from "@/components/soltar-processo";
 import { adicionarNaEquipe, criarEquipe, listarEquipes, removerDaEquipe, renomearEquipe, type Equipe } from "@/lib/equipes.functions";
 import { TelaConta } from "@/components/tela-conta";
-import { AutenticadorPerfil, CadastroAutenticador, useExigirAutenticador } from "@/components/autenticador";
+import { AutenticadorPerfil, CadastroAutenticador, CodigoNavegador, useExigirAutenticador } from "@/components/autenticador";
 import { TrocaSenhaPerfil } from "@/components/troca-senha";
 import { Timbrado, TimbradoRodape } from "@/components/timbrado";
 import { PainelEstatisticas } from "@/components/estatisticas";
@@ -69,6 +69,10 @@ import { AvisoContaExcluida } from "@/components/aviso-exclusao";
 import { signOut } from "@/lib/auth/client";
 import { BotaoConfiguracoes } from "@/components/configuracoes";
 import { assumirTemaDaConta, lerPreferencias } from "@/lib/preferencias";
+import { entrarPeloLink } from "@/lib/auth/senha-email.functions";
+import { NOME_APLICACAO } from "@/lib/nome-aplicacao";
+import { registrarAcesso } from "@/lib/lembrar-acesso";
+import { AvisoSenha } from "@/components/aviso-senha";
 
 type Filtro = "abertos" | "atencao" | "vencidos" | "prazo" | "concluidos" | "todos";
 
@@ -244,10 +248,24 @@ export function PrazosApp() {
   const tresColunas = useGradeTresColunas();
   const meuNome = user?.displayName?.trim() || "Sem nome";
   const aberturaAplicada = useRef(false);
+  const [pedirSenha, setPedirSenha] = useState(false);
 
   useEffect(() => {
     if (!user?.id) return;
     assumirTemaDaConta(user.id);
+  }, [user?.id]);
+
+  useEffect(() => {
+    const email = user?.primaryEmail;
+    if (!email) return;
+    if (registrarAcesso(email)) setPedirSenha(true);
+  }, [user?.primaryEmail]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const acesso = new URLSearchParams(window.location.search).get("acesso") ?? "";
+    if (!/^[a-f0-9]{64}$/.test(acesso)) return;
+    void entrarPeloLink({ data: { token: acesso } }).finally(() => window.location.replace("/"));
   }, [user?.id]);
 
   useEffect(() => {
@@ -393,7 +411,7 @@ export function PrazosApp() {
   useEffect(() => {
     if (!ready) return;
     const n = atencao.length;
-    document.title = n > 0 ? `(${n}) Controle de Prazos` : "Controle de Prazos";
+    document.title = n > 0 ? `(${n}) ${NOME_APLICACAO}` : NOME_APLICACAO;
   }, [atencao.length, ready]);
 
   useEffect(() => {
@@ -826,7 +844,12 @@ export function PrazosApp() {
 
   if (!user) return <TelaConta />;
 
+  if (pedirSenha && user.primaryEmail) {
+    return <AvisoSenha email={user.primaryEmail} onPronto={() => setPedirSenha(false)} />;
+  }
+
   if (autenticador.gate === "exigir") return <CadastroAutenticador onPronto={autenticador.concluir} />;
+  if (autenticador.gate === "codigo") return <CodigoNavegador onPronto={autenticador.concluir} />;
 
   if (!ready || contaId !== user.id || autenticador.gate !== "ok") return <CarregandoTemis />;
 

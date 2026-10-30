@@ -1,8 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getSql } from "@/lib/db";
 import { authMiddleware } from "@/lib/auth/middleware";
+import { NOME_APLICACAO } from "@/lib/nome-aplicacao";
 
-const ISSUER = "Controle de Prazos";
+const ISSUER = NOME_APLICACAO;
 
 const tentativas = new Map<string, { n: number; ate: number }>();
 
@@ -117,7 +118,78 @@ export const confirmarAutenticador = createServerFn({ method: "POST" })
       set segredo = ${alvo}, confirmado = true, pendente = null, atualizado_em = now()
       where user_id = ${context.userId}
     `;
-    return { ativo: true };
+    return { ativo: true, navegador: await emitirNavegador(sql, context.userId) };
+  });
+
+async function tabelaNavegador(sql: Awaited<ReturnType<typeof getSql>>) {
+  await sql`
+    create table if not exists navegador_confiado (
+      id text primary key,
+      user_id text not null,
+      token_hash text not null unique,
+      expira_em timestamptz not null,
+      criado_em timestamptz not null default now()
+    )
+  `;
+}
+
+async function emitirNavegador(sql: Awaited<ReturnType<typeof getSql>>, userId: string) {
+  await tabelaNavegador(sql);
+  const { randomBytes, createHash } = await import("node:crypto");
+  const token = randomBytes(32).toString("hex");
+  const hash = createHash("sha256").update(token).digest("hex");
+  await sql`delete from navegador_confiado where expira_em <= now()`;
+  await sql`
+    insert into navegador_confiado (id, user_id, token_hash, expira_em)
+    values (${crypto.randomUUID()}, ${userId}, ${hash}, now() + interval '30 days')
+  `;
+  return token;
+}
+
+export const situacaoNavegador = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: unknown) => {
+    const token = input && typeof input === "object" ? (input as { token?: unknown }).token : "";
+    return { token: typeof token === "string" && /^[a-f0-9]{64}$/.test(token) ? token : "" };
+  })
+  .handler(async ({ context, data }) => {
+    const sql = await getSql();
+    await tabelaNavegador(sql);
+    const linhas = await sql<{ confirmado: boolean }>`
+      select confirmado from autenticador where user_id = ${context.userId}
+    `;
+    const ativo = linhas[0]?.confirmado === true;
+    if (!data.token) return { confiado: false, ativo, expiraEm: null as string | null };
+    const { createHash } = await import("node:crypto");
+    const hash = createHash("sha256").update(data.token).digest("hex");
+    const confianca = await sql<{ expira_em: string }>`
+      select expira_em from navegador_confiado
+      where user_id = ${context.userId} and token_hash = ${hash} and expira_em > now()
+      limit 1
+    `;
+    return {
+      confiado: confianca.length > 0,
+      ativo,
+      expiraEm: confianca[0] ? String(confianca[0].expira_em) : null,
+    };
+  });
+
+export const autorizarNavegador = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: unknown) => {
+    if (!input || typeof input !== "object") throw new Error("Dados inválidos");
+    return { codigo: codigoOk((input as { codigo?: unknown }).codigo) };
+  })
+  .handler(async ({ context, data }) => {
+    const sql = await getSql();
+    const linhas = await sql<{ segredo: string }>`
+      select segredo from autenticador where user_id = ${context.userId} and confirmado = true
+    `;
+    if (!linhas[0]?.segredo) throw new Error("Cadastre o aplicativo autenticador antes de autorizar este navegador.");
+    const { createOTP } = await import("@better-auth/utils/otp");
+    const ok = await createOTP(linhas[0].segredo, { digits: 6, period: 30 }).verify(data.codigo, { window: 1 });
+    if (!ok) throw new Error("Código do aplicativo incorreto.");
+    return { navegador: await emitirNavegador(sql, context.userId) };
   });
 
 export const redefinirSenhaAutenticador = createServerFn({ method: "POST" })

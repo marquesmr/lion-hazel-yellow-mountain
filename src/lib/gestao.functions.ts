@@ -144,6 +144,20 @@ export const abrirSistemaGestao = createServerFn({ method: "POST" })
     return abrirSistemaPelaGestao(data.token);
   });
 
+export const salvarSenhaCaixaGestao = createServerFn({ method: "POST" })
+  .validator((input: unknown) => {
+    if (!input || typeof input !== "object") throw new Error("Dados inválidos");
+    const bruto = input as { token?: unknown; senha?: unknown };
+    const senha = typeof bruto.senha === "string" ? bruto.senha : "";
+    return { token: tokenOk(bruto.token), senha };
+  })
+  .handler(async ({ data }) => {
+    await mesmoLugar();
+    const { exigirGestao, salvarSenhaCaixa } = await import("./gestao.server");
+    await exigirGestao(data.token);
+    return salvarSenhaCaixa(data.senha);
+  });
+
 export const marcarPresenca = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .handler(async ({ context }) => {

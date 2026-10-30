@@ -2,12 +2,14 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "@tanstack/react-router";
 import { Scale } from "lucide-react";
 import { authClient, GROK_PROVIDERS, signIn } from "@/lib/auth/client";
-import { redefinirSenhaAutenticador, registrarAceiteTermo } from "@/lib/auth/autenticador.functions";
+import { criarContaComCodigo, entrarPeloLink, pedirCodigoCadastro, pedirCodigoSenha, redefinirComCodigo } from "@/lib/auth/senha-email.functions";
 import { consultarExclusao, limparAvisoExclusao } from "@/lib/gestao.functions";
-import { limparExigenciaLocal, marcarExigenciaLocal } from "@/components/autenticador";
 import { AvisoContaExcluida } from "@/components/aviso-exclusao";
 import { TermosCadastro } from "@/components/termos-cadastro";
+import { CampoSenha } from "@/components/campo-senha";
+import { AvisoSenha } from "@/components/aviso-senha";
 import { soltarTemaDaConta } from "@/lib/preferencias";
+import { concluirAcessoForcado, esquecerLembranca, guardarLembranca, lerLembranca } from "@/lib/lembrar-acesso";
 
 type Modo = "entrar" | "criar" | "esqueci";
 const AVISO_EXCLUSAO = "prazos.conta-excluida";
@@ -30,30 +32,61 @@ export function TelaConta() {
   const [motivoAviso, setMotivoAviso] = useState(() => sessionStorage.getItem(MOTIVO_EXCLUSAO) ?? "");
   const [enviando, setEnviando] = useState(false);
   const [termos, setTermos] = useState(false);
+  const [confirmando, setConfirmando] = useState(false);
+  const [codigoCadastro, setCodigoCadastro] = useState("");
+  const [codigoLink, setCodigoLink] = useState("");
+  const [lembrar, setLembrar] = useState(false);
+  const [reverSenha, setReverSenha] = useState(false);
+  const [esperaCodigo, setEsperaCodigo] = useState(0);
+
+  useEffect(() => {
+    if (esperaCodigo <= 0) return;
+    const id = window.setTimeout(() => setEsperaCodigo((valor) => valor - 1), 1000);
+    return () => window.clearTimeout(id);
+  }, [esperaCodigo]);
 
   useEffect(() => {
     soltarTemaDaConta();
+    const params = new URLSearchParams(window.location.search);
+    const acesso = params.get("acesso") ?? "";
+    if (/^[a-f0-9]{64}$/.test(acesso)) {
+      setEnviando(true);
+      void entrarPeloLink({ data: { token: acesso } })
+        .then(() => window.location.replace("/"))
+        .catch((err) => {
+          setErro(err instanceof Error ? err.message : "Este link expirou. Entre com seu e-mail e senha.");
+          setEnviando(false);
+        });
+      return;
+    }
+    if (params.get("senha") === "1") {
+      const emailQ = params.get("email") ?? "";
+      const codigoQ = (params.get("codigo") ?? "").replace(/\D/g, "").slice(0, 6);
+      if (emailQ) setEmail(emailQ);
+      setCodigoLink(codigoQ);
+      setModo("esqueci");
+      return;
+    }
+    const guardado = lerLembranca();
+    if (guardado) {
+      setEmail(guardado.email);
+      setSenha(guardado.senha);
+      setLembrar(true);
+      if (guardado.senha && (guardado.acessos + 1) % 5 === 0) setReverSenha(true);
+    }
   }, []);
 
   async function concluir(modoAtual: Modo) {
+    if (modoAtual === "criar") return;
     setEnviando(true);
-    if (modoAtual === "criar") marcarExigenciaLocal();
     try {
-      const resultado =
-        modoAtual === "criar"
-          ? await authClient.signUp.email({
-              name: nome.trim(),
+      const resultado = await authClient.signIn.email({
               email: email.trim(),
               password: senha,
               callbackURL: "/",
-            })
-          : await authClient.signIn.email({
-              email: email.trim(),
-              password: senha,
-              callbackURL: "/",
+              rememberMe: lembrar,
             });
       if (resultado.error) {
-        if (modoAtual === "criar") limparExigenciaLocal();
         if (modoAtual === "entrar") {
           const estado = await consultarExclusao({ data: { email: email.trim() } }).catch(() => ({ excluida: false, motivo: "" }));
           if (estado.excluida) {
@@ -70,13 +103,13 @@ export function TelaConta() {
         setErro(traduzir(resultado.error.message ?? ""));
         return;
       }
-      if (modoAtual === "criar") void registrarAceiteTermo().catch(() => undefined);
+      if (lembrar) guardarLembranca(email.trim(), senha);
+      else if ((lerLembranca()?.email ?? "").toLowerCase() === email.trim().toLowerCase()) esquecerLembranca();
       void limparAvisoExclusao({ data: { email: email.trim() } }).catch(() => undefined);
       sessionStorage.removeItem(AVISO_EXCLUSAO);
       sessionStorage.removeItem(MOTIVO_EXCLUSAO);
       sessionStorage.removeItem(VISTA_EXCLUSAO);
     } catch (err) {
-      if (modoAtual === "criar") limparExigenciaLocal();
       setErro(traduzir(err instanceof Error ? err.message : ""));
     } finally {
       setEnviando(false);
@@ -102,14 +135,54 @@ export function TelaConta() {
     void concluir("entrar");
   }
 
+  async function enviarCodigoCadastro() {
+    setErro("");
+    setAviso("");
+    setEnviando(true);
+    try {
+      await pedirCodigoCadastro({ data: { email: email.trim(), nome: nome.trim() } });
+      setConfirmando(true);
+      setEsperaCodigo(40);
+      setAviso("Enviamos o código de confirmação para o seu e-mail.");
+    } catch (err) {
+      setErro(err instanceof Error ? err.message : "Não foi possível enviar o código.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  async function confirmarCadastro(event: FormEvent) {
+    event.preventDefault();
+    setErro("");
+    setEnviando(true);
+    try {
+      await criarContaComCodigo({
+        data: { nome: nome.trim(), email: email.trim(), senha, codigo: codigoCadastro },
+      });
+      window.location.assign("/");
+    } catch (err) {
+      setErro(err instanceof Error ? err.message : "Não foi possível confirmar o e-mail.");
+      setEnviando(false);
+    }
+  }
+
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 py-10">
+      {reverSenha && email && (
+        <AvisoSenha
+          email={email}
+          onPronto={() => {
+            concluirAcessoForcado();
+            setReverSenha(false);
+          }}
+        />
+      )}
       {termos && (
         <TermosCadastro
           onVoltar={() => setTermos(false)}
           onContinuar={() => {
             setTermos(false);
-            void concluir("criar");
+            void enviarCodigoCadastro();
           }}
         />
       )}
@@ -136,14 +209,54 @@ export function TelaConta() {
         {excluida
           ? "Sua conta foi excluída e você foi desconectado. Para entrar de novo, crie outra conta."
           : modo === "criar"
-            ? "Crie a conta com e-mail e senha. Em seguida, leia e aceite os termos de uso."
+            ? "Crie a conta com e-mail e senha. O e-mail precisa ser confirmado com o código enviado."
             : "Entre com o mesmo e-mail e senha para abrir os processos neste navegador."}
       </p>
 
       <div className="mt-6 rounded-2xl border border-line bg-sheet p-5">
-        {modo === "esqueci" ? (
+        {confirmando ? (
+          <form className="flex flex-col gap-3" onSubmit={(event) => void confirmarCadastro(event)}>
+            <h2 className="font-display text-2xl text-ink">Confirmar e-mail</h2>
+            <p className="text-sm text-muted">
+              Digite o código enviado para {email}. Ele vale por 24 horas e sai de auxilialegis@marquestecnologies.com.
+            </p>
+            {aviso && <p className="rounded-xl bg-pine-soft px-3 py-2 text-sm text-pine">{aviso}</p>}
+            {erro && <p className="rounded-xl bg-seal-soft px-3 py-2 text-sm text-seal">{erro}</p>}
+            <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+              Código
+              <input
+                value={codigoCadastro}
+                onChange={(event) => setCodigoCadastro(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                className={campo}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="000000"
+                required
+              />
+            </label>
+            <button type="submit" disabled={enviando} className="inline-flex h-12 items-center justify-center rounded-xl bg-pine text-sm font-medium text-sheet disabled:opacity-60">
+              {enviando ? "Confirmando…" : "Confirmar e criar conta"}
+            </button>
+            <button type="button" onClick={() => void enviarCodigoCadastro()} disabled={enviando || esperaCodigo > 0} className="h-11 text-sm font-medium text-pine disabled:opacity-60">
+              {esperaCodigo > 0 ? `Novo código em ${esperaCodigo}s` : "Enviar outro código"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmando(false);
+                setCodigoCadastro("");
+                setErro("");
+                setAviso("");
+              }}
+              className="h-11 text-sm font-medium text-pine"
+            >
+              Voltar
+            </button>
+          </form>
+        ) : modo === "esqueci" ? (
           <RecuperarSenha
             emailInicial={email}
+            codigoInicial={codigoLink}
             onVoltar={() => {
               setModo("entrar");
               setErro("");
@@ -189,8 +302,7 @@ export function TelaConta() {
         </label>
         <label className="flex flex-col gap-1 text-sm font-medium text-ink">
           Senha
-          <input
-            type="password"
+          <CampoSenha
             value={senha}
             onChange={(e) => setSenha(e.target.value)}
             className={campo}
@@ -199,6 +311,19 @@ export function TelaConta() {
             required
           />
         </label>
+        {modo === "entrar" && (
+          <>
+            <label className="flex items-center gap-2 text-sm text-ink">
+              <input
+                type="checkbox"
+                checked={lembrar}
+                onChange={(evento) => setLembrar(evento.target.checked)}
+                className="size-4 shrink-0"
+              />
+              Lembre-se de mim
+            </label>
+          </>
+        )}
         {modo === "entrar" && (
           <button
             type="button"
@@ -258,30 +383,61 @@ const campo = "h-11 w-full rounded-xl border border-line bg-paper px-3 text-sm f
 
 function RecuperarSenha({
   emailInicial,
+  codigoInicial = "",
   onVoltar,
   onPronto,
 }: {
   emailInicial: string;
+  codigoInicial?: string;
   onVoltar: () => void;
   onPronto: () => void;
 }) {
   const [email, setEmail] = useState(emailInicial);
-  const [codigo, setCodigo] = useState("");
+  const [codigo, setCodigo] = useState(codigoInicial);
   const [senha, setSenha] = useState("");
   const [repete, setRepete] = useState("");
+  const [enviado, setEnviado] = useState(codigoInicial.length === 6);
   const [erro, setErro] = useState("");
+  const [aviso, setAviso] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [espera, setEspera] = useState(codigoInicial.length === 6 ? 40 : 0);
+
+  useEffect(() => {
+    if (espera <= 0) return;
+    const id = window.setTimeout(() => setEspera((valor) => valor - 1), 1000);
+    return () => window.clearTimeout(id);
+  }, [espera]);
+
+  async function pedir() {
+    setErro("");
+    setAviso("");
+    setEnviando(true);
+    try {
+      await pedirCodigoSenha({ data: { email: email.trim() } });
+      setEnviado(true);
+      setEspera(40);
+      setAviso("Se houver conta com este e-mail, o código foi enviado por auxilialegis@marquestecnologies.com.");
+    } catch (err) {
+      setErro(err instanceof Error ? err.message : "Não foi possível enviar o código.");
+    } finally {
+      setEnviando(false);
+    }
+  }
 
   async function redefinir(event: FormEvent) {
     event.preventDefault();
     setErro("");
+    if (!enviado) {
+      await pedir();
+      return;
+    }
     if (senha !== repete) {
       setErro("A repetição não é igual à nova senha.");
       return;
     }
     setEnviando(true);
     try {
-      await redefinirSenhaAutenticador({ data: { email: email.trim(), codigo, senha } });
+      await redefinirComCodigo({ data: { email: email.trim(), codigo, senha } });
       onPronto();
     } catch (err) {
       setErro(err instanceof Error ? err.message : "Não foi possível redefinir a senha.");
@@ -293,37 +449,44 @@ function RecuperarSenha({
   return (
     <form className="flex flex-col gap-3" onSubmit={(event) => void redefinir(event)}>
       <h2 className="font-display text-2xl text-ink">Esqueci minha senha</h2>
-      <p className="text-sm text-muted">
-        Digite o e-mail, o código de 6 dígitos do aplicativo autenticador e a nova senha. O código não é enviado por e-mail.
-      </p>
+      {aviso && <p className="rounded-xl bg-pine-soft px-3 py-2 text-sm text-pine">{aviso}</p>}
       {erro && <p className="rounded-xl bg-seal-soft px-3 py-2 text-sm text-seal">{erro}</p>}
       <label className="flex flex-col gap-1 text-sm font-medium text-ink">
         E-mail
         <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={campo} autoComplete="email" required />
       </label>
-      <label className="flex flex-col gap-1 text-sm font-medium text-ink">
-        Código do aplicativo
-        <input
-          value={codigo}
-          onChange={(e) => setCodigo(e.target.value.replace(/\D/g, "").slice(0, 6))}
-          className={campo}
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          placeholder="000000"
-          required
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-sm font-medium text-ink">
-        Nova senha
-        <input type="password" value={senha} onChange={(e) => setSenha(e.target.value)} className={campo} autoComplete="new-password" minLength={8} required />
-      </label>
-      <label className="flex flex-col gap-1 text-sm font-medium text-ink">
-        Repetir nova senha
-        <input type="password" value={repete} onChange={(e) => setRepete(e.target.value)} className={campo} autoComplete="new-password" minLength={8} required />
-      </label>
+      {enviado && (
+        <>
+          <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+            Código do e-mail
+            <input
+              value={codigo}
+              onChange={(e) => setCodigo(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              className={campo}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="000000"
+              required
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+            Nova senha
+            <CampoSenha value={senha} onChange={(e) => setSenha(e.target.value)} className={campo} autoComplete="new-password" minLength={8} required />
+          </label>
+          <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+            Repetir nova senha
+            <CampoSenha value={repete} onChange={(e) => setRepete(e.target.value)} className={campo} autoComplete="new-password" minLength={8} required />
+          </label>
+        </>
+      )}
       <button type="submit" disabled={enviando} className="inline-flex h-12 items-center justify-center rounded-xl bg-pine text-sm font-medium text-sheet disabled:opacity-60">
-        {enviando ? "Salvando…" : "Redefinir senha"}
+        {enviando ? "Aguarde…" : enviado ? "Redefinir senha" : "Enviar código"}
       </button>
+      {enviado && (
+        <button type="button" onClick={() => void pedir()} disabled={enviando || espera > 0} className="h-11 text-sm font-medium text-pine disabled:opacity-60">
+          {espera > 0 ? `Novo código em ${espera}s` : "Enviar outro código"}
+        </button>
+      )}
       <button type="button" onClick={onVoltar} className="h-11 text-sm font-medium text-pine">
         Voltar para entrar
       </button>

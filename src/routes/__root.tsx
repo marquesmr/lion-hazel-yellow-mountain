@@ -6,7 +6,7 @@ import { AplicarTema } from "@/components/aplicar-tema";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import appCss from "../styles.css?url";
 
-const APP_NAME = "Controle de Prazos";
+import { NOME_APLICACAO } from "@/lib/nome-aplicacao";
 
 function hostPublico() {
   const bruto = String(import.meta.env.VITE_PUBLIC_HOSTNAME ?? "")
@@ -56,7 +56,7 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: APP_NAME },
+      { title: NOME_APLICACAO },
       {
         name: "description",
         content:

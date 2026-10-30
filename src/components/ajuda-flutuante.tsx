@@ -110,7 +110,7 @@ const TOPICOS: {
     id: "conta",
     chaves: ["perfil", "senha", "autentic", "dois fatores", "login", "conta", "nome"],
     explica:
-      "a conta é o que guarda tudo, então você entra com o mesmo e-mail em outro navegador e os processos continuam. No perfil muda o nome, que aparece como autor, e a senha. A senha nova pede o aplicativo autenticador. Na criação da conta esse autenticador já é obrigatório: só entra depois de confirmar o código.",
+      "a conta é o que guarda tudo, então você entra com o mesmo e-mail em outro navegador e os processos continuam. Para criar a conta, o e-mail recebe um código e só depois da confirmação a conta existe. Navegador desconhecido pede o código do aplicativo autenticador e fica autorizado por 30 dias. No perfil muda o nome, que aparece como autor, e a senha. A senha esquecida chega por código no e-mail.",
     caminho: "para trocar a senha, abre Perfil. O autenticador é o mesmo que você cadastrou ao criar a conta.",
     lugar: "Perfil é o botão ao lado da configuração, no topo.",
   },

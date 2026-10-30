@@ -476,6 +476,10 @@ export const salvarAdmin = createServerFn({ method: "POST" })
           returning id
         `;
     if (!salvos.length) throw new Error("Não foi possível salvar");
+    if (!existente.length) {
+      const { backupAoLancar } = await import("./gestao.server");
+      await backupAoLancar();
+    }
     void anotarUso(context.userId, existente.length ? "Alterou processo administrativo" : "Lançou processo administrativo", `${data.numero} · ${data.tipo}`).catch(() => undefined);
     return { id: salvos[0].id };
   });

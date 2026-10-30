@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { CampoSenha } from "@/components/campo-senha";
 import { authClient } from "@/lib/auth/client";
 
 const campo = "h-11 w-full rounded-xl border border-line bg-paper px-3 text-sm font-normal text-ink";
@@ -58,15 +59,15 @@ export function TrocaSenhaPerfil() {
       {erro && <p className="rounded-xl bg-seal-soft px-3 py-2 text-sm text-seal">{erro}</p>}
       <label className="flex flex-col gap-1 text-sm font-medium text-ink">
         Senha atual
-        <input type="password" value={atual} onChange={(e) => setAtual(e.target.value)} className={campo} autoComplete="current-password" required />
+        <CampoSenha value={atual} onChange={(e) => setAtual(e.target.value)} className={campo} autoComplete="current-password" required />
       </label>
       <label className="flex flex-col gap-1 text-sm font-medium text-ink">
         Nova senha
-        <input type="password" value={nova} onChange={(e) => setNova(e.target.value)} className={campo} autoComplete="new-password" minLength={8} required />
+        <CampoSenha value={nova} onChange={(e) => setNova(e.target.value)} className={campo} autoComplete="new-password" minLength={8} required />
       </label>
       <label className="flex flex-col gap-1 text-sm font-medium text-ink">
         Repetir nova senha
-        <input type="password" value={repete} onChange={(e) => setRepete(e.target.value)} className={campo} autoComplete="new-password" minLength={8} required />
+        <CampoSenha value={repete} onChange={(e) => setRepete(e.target.value)} className={campo} autoComplete="new-password" minLength={8} required />
       </label>
       <button type="submit" disabled={enviando} className="inline-flex h-11 items-center justify-center rounded-xl bg-pine text-sm font-medium text-sheet disabled:opacity-60">
         {enviando ? "Salvando…" : "Trocar senha"}
