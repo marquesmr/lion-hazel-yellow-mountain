@@ -178,6 +178,11 @@ export default defineConfig(({ command, isPreview }) => ({
             // Radix leaves a bare `tslib` import. Tracing it into the function
             // does not survive the Vercel upload, so the site returns 500.
             noExternals: ["tslib"],
+            vercel: {
+              functions: {
+                maxDuration: 60,
+              },
+            },
           }),
         ]
       : []),

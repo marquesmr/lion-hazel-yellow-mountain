@@ -2,7 +2,7 @@ import { randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
 import { readFileSync, statfsSync } from "node:fs";
 import { cpus, freemem, totalmem } from "node:os";
 import { promisify } from "node:util";
-import { getSql, lerTrafego, type Sql } from "@/lib/db";
+import { copiarBancoAgora, getSql, lerTrafego, semPersistencia, type Sql } from "@/lib/db";
 import { motivoExclusao } from "@/lib/motivos-exclusao";
 
 const scrypt = promisify(scryptCb);
@@ -977,6 +977,17 @@ async function gravarLinhas(sql: Sql, tabela: string, conflito: string[], linhas
   return gravadas;
 }
 
+function idsDe(linhas: unknown, campo: string) {
+  if (!Array.isArray(linhas)) return [];
+  const ids: string[] = [];
+  for (const item of linhas) {
+    if (!item || typeof item !== "object") continue;
+    const valor = (item as Record<string, unknown>)[campo];
+    if (typeof valor === "string" && valor) ids.push(valor);
+  }
+  return ids;
+}
+
 export async function restaurarBackup(conteudo: string) {
   if (conteudo.length > 12_000_000) throw new Error("O arquivo é grande demais.");
   let dados: {
@@ -994,22 +1005,39 @@ export async function restaurarBackup(conteudo: string) {
   if ((dados.versao !== 1 && dados.versao !== 2) || !Array.isArray(dados.processos) || !Array.isArray(dados.processosAdmin)) {
     throw new Error("Este arquivo não é um backup do Auxilia Legis.");
   }
-  const sql = await getSql();
-  const contas = await gravarLinhas(sql, '"user"', ["id"], dados.usuarios);
-  await gravarLinhas(sql, '"account"', ["id"], dados.contas);
-  await gravarLinhas(sql, "autenticador", ["user_id"], (dados as { autenticadores?: unknown }).autenticadores);
-  await gravarLinhas(sql, "usuario_perfil", ["user_id"], (dados as { perfis?: unknown }).perfis);
-  await gravarLinhas(sql, "termo_aceite", ["user_id"], (dados as { termos?: unknown }).termos);
-  await gravarLinhas(sql, "gestao_acesso", ["id"], (dados as { gestaoAcesso?: unknown }).gestaoAcesso);
-  await gravarLinhas(sql, "equipes", ["id"], (dados as { equipes?: unknown }).equipes);
-  await gravarLinhas(sql, "equipe_membros", ["equipe_id", "user_id"], (dados as { membros?: unknown }).membros);
-  await gravarLinhas(sql, "equipe_convites", ["equipe_id", "email"], (dados as { convites?: unknown }).convites);
-  await gravarLinhas(sql, "abas_catalogo", ["id"], (dados as { abas?: unknown }).abas);
-  await gravarLinhas(sql, "feriados", ["id"], (dados as { feriados?: unknown }).feriados);
-  await gravarLinhas(sql, "conta_excluida", ["user_id"], (dados as { excluidas?: unknown }).excluidas);
-  const processos = await gravarLinhas(sql, "processos", ["id"], dados.processos);
-  const administrativos = await gravarLinhas(sql, "processos_admin", ["id"], dados.processosAdmin);
-  return { contas, processos, administrativos };
+  if (!Array.isArray(dados.contas) || dados.contas.length === 0) {
+    throw new Error("Este backup não contém as contas. Gere um novo backup onde os usuários ainda existem e restaure esse arquivo.");
+  }
+  await getSql();
+  const resultado = await semPersistencia(async () => {
+    const sql = await getSql();
+    const contas = await gravarLinhas(sql, '"user"', ["id"], dados.usuarios);
+    await gravarLinhas(sql, '"account"', ["id"], dados.contas);
+    await gravarLinhas(sql, "autenticador", ["user_id"], (dados as { autenticadores?: unknown }).autenticadores);
+    await gravarLinhas(sql, "usuario_perfil", ["user_id"], (dados as { perfis?: unknown }).perfis);
+    await gravarLinhas(sql, "termo_aceite", ["user_id"], (dados as { termos?: unknown }).termos);
+    await gravarLinhas(sql, "gestao_acesso", ["id"], (dados as { gestaoAcesso?: unknown }).gestaoAcesso);
+    await gravarLinhas(sql, "equipes", ["id"], (dados as { equipes?: unknown }).equipes);
+    await gravarLinhas(sql, "equipe_membros", ["equipe_id", "user_id"], (dados as { membros?: unknown }).membros);
+    await gravarLinhas(sql, "equipe_convites", ["equipe_id", "email"], (dados as { convites?: unknown }).convites);
+    await gravarLinhas(sql, "abas_catalogo", ["id"], (dados as { abas?: unknown }).abas);
+    await gravarLinhas(sql, "feriados", ["id"], (dados as { feriados?: unknown }).feriados);
+    await gravarLinhas(sql, "conta_excluida", ["user_id"], (dados as { excluidas?: unknown }).excluidas);
+    const processos = await gravarLinhas(sql, "processos", ["id"], dados.processos);
+    const administrativos = await gravarLinhas(sql, "processos_admin", ["id"], dados.processosAdmin);
+    const ids = [...new Set([...idsDe(dados.usuarios, "id"), ...idsDe(dados.contas, "userId")])];
+    for (const id of ids) {
+      await sql`
+        insert into usuario_perfil (user_id, papel, bloqueado, isento_2fa)
+        values (${id}, 'operador', false, true)
+        on conflict (user_id) do update set isento_2fa = true
+      `;
+      await sql`update "user" set "emailVerified" = true where id = ${id}`;
+    }
+    return { contas, processos, administrativos };
+  });
+  await copiarBancoAgora();
+  return resultado;
 }
 
 export async function salvarFeriado(entrada: { nome: string; tipo: string; inicio: string; fim: string }) {

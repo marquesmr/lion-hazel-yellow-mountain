@@ -17,6 +17,7 @@ import {
   type QueryResult,
   type TransactionSettings,
 } from "kysely";
+import { concluirTransacaoPglite, consultarPglite, iniciarTransacaoPglite } from "../db";
 
 type Client = PGlite;
 
@@ -73,26 +74,44 @@ class LazyPGliteDriver implements Driver {
     conn: DatabaseConnection,
     settings: TransactionSettings,
   ): Promise<void> {
+    await iniciarTransacaoPglite();
     const c = conn as PGliteConnection;
-    if (settings.isolationLevel) {
-      await c.executeQuery(
-        CompiledQuery.raw(
-          `start transaction isolation level ${settings.isolationLevel}`,
-        ),
-      );
-    } else {
-      await c.executeQuery(CompiledQuery.raw("begin"));
+    try {
+      if (settings.isolationLevel) {
+        await c.executeQuery(
+          CompiledQuery.raw(
+            `start transaction isolation level ${settings.isolationLevel}`,
+          ),
+        );
+      } else {
+        await c.executeQuery(CompiledQuery.raw("begin"));
+      }
+    } catch (err) {
+      await concluirTransacaoPglite(false);
+      throw err;
     }
   }
 
   async commitTransaction(conn: DatabaseConnection): Promise<void> {
-    await (conn as PGliteConnection).executeQuery(CompiledQuery.raw("commit"));
+    let gravou = false;
+    try {
+      await (conn as PGliteConnection).executeQuery(CompiledQuery.raw("commit"));
+      gravou = true;
+      await concluirTransacaoPglite(true);
+    } catch (err) {
+      if (!gravou) await concluirTransacaoPglite(false);
+      throw err;
+    }
   }
 
   async rollbackTransaction(conn: DatabaseConnection): Promise<void> {
-    await (conn as PGliteConnection).executeQuery(
-      CompiledQuery.raw("rollback"),
-    );
+    try {
+      await (conn as PGliteConnection).executeQuery(
+        CompiledQuery.raw("rollback"),
+      );
+    } finally {
+      await concluirTransacaoPglite(false);
+    }
   }
 
   async destroy(): Promise<void> {
@@ -109,16 +128,16 @@ class PGliteConnection implements DatabaseConnection {
   constructor(private readonly client: Client) {}
 
   async executeQuery<O>(compiledQuery: CompiledQuery): Promise<QueryResult<O>> {
-    const result = await this.client.query(compiledQuery.sql, [
+    const result = await consultarPglite<O>(compiledQuery.sql, [
       ...compiledQuery.parameters,
     ]);
     if (result.affectedRows) {
       return {
         numAffectedRows: BigInt(result.affectedRows),
-        rows: result.rows as O[],
+        rows: result.rows,
       };
     }
-    return { rows: result.rows as O[] };
+    return { rows: result.rows };
   }
 
   async *streamQuery<O>(
@@ -128,7 +147,7 @@ class PGliteConnection implements DatabaseConnection {
     if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
       throw new Error("chunkSize must be a positive integer");
     }
-    const result = await this.client.query(compiledQuery.sql, [
+    const result = await consultarPglite<O>(compiledQuery.sql, [
       ...compiledQuery.parameters,
     ]);
     for (let i = 0; i < result.rows.length; i += chunkSize) {

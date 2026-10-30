@@ -1,4 +1,10 @@
 import { pendingMigrations } from "../../scripts/migration-plan.mjs";
+import {
+  buscarCopia,
+  conflitoDeGravacao,
+  gravarCopia,
+  nuvemConfigurada,
+} from "./banco-nuvem";
 
 /** Which database backend is active. */
 export type DbSource = "neon" | "pglite";
@@ -46,8 +52,6 @@ export interface Sql {
  */
 const globalRef = globalThis as typeof globalThis & {
   __pgSqlPromise__?: Promise<Sql>;
-  __pgliteInstance__?: Promise<import("@electric-sql/pglite").PGlite>;
-  __pgliteMigrateChain__?: Promise<void>;
 };
 
 /**
@@ -133,65 +137,10 @@ function createNeonSql(): Promise<Sql> {
 }
 
 async function createPgliteSql(): Promise<Sql> {
-  // Embedded Postgres, imported on demand so it never loads on the Neon path.
-  // One in-memory instance per process, shared across HMR module instances, so
-  // data survives source edits (it resets on dev-server restart).
-  globalRef.__pgliteInstance__ ??= (async () => {
-    const { PGlite } = await import("@electric-sql/pglite");
-    const pg = new PGlite({
-      parsers: {
-        [OID_INT8]: Number,
-        [OID_DATE]: identity,
-        [OID_INTERVAL]: identity,
-      },
-    });
-    await pg.waitReady;
-    await pg.exec(
-      "create table if not exists _migrations (name text primary key, applied_at timestamptz not null default now())",
-    );
-    return pg;
-  })().catch((err) => {
-    globalRef.__pgliteInstance__ = undefined;
-    throw err;
-  });
-  const pg = await globalRef.__pgliteInstance__;
-
-  // Apply migrations/ (the single schema source) so preview matches production.
-  // A reload of this module picks up migration files added after startup, including the authenticator table.
-  // SQL is inlined by the bundler via import.meta.glob (no runtime fs); applied
-  // files are tracked in _migrations. The glob does not descend, so the opt-in
-  // auth schema under migrations/auth/ stays out. Runs once per module instance
-  // — so an HMR reload after adding a migration file applies it live — with
-  // passes serialized on a global chain so concurrent callers never
-  // double-apply.
-  const migrate = async (): Promise<void> => {
-    const migrations = import.meta.glob("/migrations/*.sql", {
-      query: "?raw",
-      import: "default",
-      eager: true,
-    }) as Record<string, string>;
-    const doneRows = await pg.query<{ name: string }>(
-      "select name from _migrations",
-    );
-    const done = doneRows.rows.map((r) => r.name);
-    for (const { name, path } of pendingMigrations(Object.keys(migrations), done)) {
-      // Apply + record atomically (parity with scripts/migrate.mjs) so a failed
-      // statement can't leave a file half-applied but untracked.
-      await pg.transaction(async (tx) => {
-        await tx.exec(migrations[path]);
-        await tx.query("insert into _migrations (name) values ($1)", [name]);
-      });
-    }
-  };
-  const pass = (globalRef.__pgliteMigrateChain__ ?? Promise.resolve())
-    .catch(() => undefined) // an earlier failed pass must not wedge the chain
-    .then(migrate);
-  globalRef.__pgliteMigrateChain__ = pass;
-  await pass;
-
+  await exclusivo(() => alinharComNuvem());
   return toSql(async <T>(text: string, params: unknown[]) => {
-    const result = await pg.query<T>(text, params);
-    return result.rows;
+    const resultado = await consultarPglite<T>(text, params);
+    return resultado.rows;
   });
 }
 
@@ -231,8 +180,8 @@ export async function getPglite(): Promise<import("@electric-sql/pglite").PGlite
   if (dbSource !== "pglite") {
     throw new Error("getPglite() is only available on the PGLite fallback (no DATABASE_URL)");
   }
-  await getSql();
-  const pg = await globalRef.__pgliteInstance__;
+  await exclusivo(() => alinharComNuvem());
+  const pg = estadoBanco().pg;
   if (!pg) throw new Error("PGLite instance failed to initialize");
   return pg;
 }
@@ -257,7 +206,251 @@ export function ensureDbReady(): Promise<void> {
 const globalBoot = globalThis as typeof globalThis & {
   __pgBootstrapPromise__?: Promise<void>;
 };
+
+type Pglite = import("@electric-sql/pglite").PGlite;
+
+type BancoEstado = {
+  pg: Pglite | null;
+  etag: string | null;
+  ultimoCheck: number;
+  cadeia: Promise<void>;
+  tx: number;
+  sujou: boolean;
+  suspenso: number;
+  migrado: boolean;
+  repetir: boolean;
+  copia?: Promise<void>;
+  forcar: boolean;
+};
+
+function estadoBanco(): BancoEstado {
+  const g = globalThis as typeof globalThis & { __bancoEstado__?: BancoEstado };
+  g.__bancoEstado__ ??= {
+    pg: null,
+    etag: null,
+    ultimoCheck: 0,
+    cadeia: Promise.resolve(),
+    tx: 0,
+    sujou: false,
+    suspenso: 0,
+    migrado: false,
+    repetir: false,
+    forcar: false,
+  };
+  return g.__bancoEstado__;
+}
+
+function exclusivo<T>(fn: () => Promise<T>): Promise<T> {
+  const estado = estadoBanco();
+  const corre = estado.cadeia.then(fn, fn);
+  estado.cadeia = corre.then(
+    () => undefined,
+    () => undefined,
+  );
+  return corre;
+}
+
+function mutacao(text: string) {
+  const s = text
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/--[^\n]*/g, " ")
+    .trim()
+    .toLowerCase();
+  if (/^(insert|update|delete|alter|drop|truncate)\b/.test(s)) return true;
+  return /^with\b/.test(s) && /\b(insert|update|delete)\b/.test(s);
+}
+
+async function criarPglite(carga?: Blob) {
+  const { PGlite } = await import("@electric-sql/pglite");
+  const pg = new PGlite({
+    parsers: {
+      [OID_INT8]: Number,
+      [OID_DATE]: identity,
+      [OID_INTERVAL]: identity,
+    },
+    ...(carga ? { loadDataDir: carga } : {}),
+  });
+  await pg.waitReady;
+  await pg.exec(
+    "create table if not exists _migrations (name text primary key, applied_at timestamptz not null default now())",
+  );
+  return pg;
+}
+
+async function migrar(pg: Pglite) {
+  const migrations = import.meta.glob("/migrations/*.sql", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }) as Record<string, string>;
+  const feitas = await pg.query<{ name: string }>("select name from _migrations");
+  const done = feitas.rows.map((r) => r.name);
+  for (const { name, path } of pendingMigrations(Object.keys(migrations), done)) {
+    await pg.transaction(async (tx) => {
+      await tx.exec(migrations[path]);
+      await tx.query("insert into _migrations (name) values ($1)", [name]);
+    });
+  }
+}
+
+async function aplicarCopia(etag: string, blob: Blob) {
+  const estado = estadoBanco();
+  const novo = await criarPglite(blob);
+  try {
+    await migrar(novo);
+  } catch (err) {
+    await novo.close().catch(() => undefined);
+    throw err;
+  }
+  if (estado.pg && !estado.pg.closed) await estado.pg.close().catch(() => undefined);
+  estado.pg = novo;
+  estado.etag = etag;
+  estado.migrado = true;
+  estado.ultimoCheck = Date.now();
+  console.info("[banco] snapshot carregado");
+}
+
+async function alinharComNuvem() {
+  const estado = estadoBanco();
+  if (estado.suspenso > 0 && estado.pg && estado.migrado) return;
+  if (!nuvemConfigurada()) {
+    if (!estado.pg) estado.pg = await criarPglite();
+    if (!estado.migrado) {
+      await migrar(estado.pg);
+      estado.migrado = true;
+    }
+    return;
+  }
+  const fresco = !estado.pg || Date.now() - estado.ultimoCheck >= 400;
+  if (fresco) {
+    const copia = await buscarCopia(estado.etag);
+    estado.ultimoCheck = Date.now();
+    if (copia.tipo === "nova") {
+      await aplicarCopia(copia.etag, copia.blob);
+      return;
+    }
+    if (!estado.pg) estado.pg = await criarPglite();
+  }
+  if (estado.pg && !estado.migrado) {
+    await migrar(estado.pg);
+    estado.migrado = true;
+  }
+}
+
+async function gravarUmaVez() {
+  const estado = estadoBanco();
+  if (!estado.pg || !nuvemConfigurada()) return;
+  let condicao = estado.etag;
+  if (!estado.forcar) {
+    const atual = await buscarCopia(estado.etag);
+    if (atual.tipo === "nova" && atual.etag !== estado.etag) {
+      await aplicarCopia(atual.etag, atual.blob);
+      return;
+    }
+    if (atual.tipo === "ausente") condicao = null;
+  }
+  const arquivo = await estado.pg.dumpDataDir("gzip");
+  try {
+    estado.etag = await gravarCopia(arquivo, estado.forcar ? null : condicao);
+    estado.ultimoCheck = Date.now();
+    console.info("[banco] snapshot guardado");
+  } catch (err) {
+    if (!conflitoDeGravacao(err)) {
+      console.error("[banco] falha ao guardar", err);
+      throw err;
+    }
+    const nova = await buscarCopia(null);
+    if (nova.tipo === "nova") await aplicarCopia(nova.etag, nova.blob);
+    if (estado.forcar) {
+      throw new Error("A restauração cruzou com outra gravação. Restaure o arquivo de novo.");
+    }
+  }
+}
+
+async function persistir(): Promise<void> {
+  const estado = estadoBanco();
+  if (!nuvemConfigurada() || estado.suspenso > 0) return;
+  estado.repetir = true;
+  if (!estado.copia) {
+    estado.copia = (async () => {
+      try {
+        await exclusivo(async () => {
+          while (estadoBanco().repetir) {
+            estadoBanco().repetir = false;
+            await gravarUmaVez();
+          }
+        });
+      } finally {
+        estadoBanco().copia = undefined;
+      }
+    })();
+  }
+  await estado.copia;
+  if (estadoBanco().repetir) return persistir();
+}
+
+export async function consultarPglite<T = Record<string, unknown>>(
+  text: string,
+  params: unknown[] = [],
+): Promise<{ rows: T[]; affectedRows?: number }> {
+  let copiar = false;
+  const resultado = await exclusivo(async () => {
+    const estado = estadoBanco();
+    if (estado.tx === 0) await alinharComNuvem();
+    const pg = estado.pg;
+    if (!pg) throw new Error("Banco indisponível.");
+    const resposta = await pg.query<T>(text, params);
+    if (mutacao(text)) {
+      if (estado.tx > 0) estado.sujou = true;
+      else if (estado.suspenso === 0) copiar = true;
+    }
+    return { rows: resposta.rows, affectedRows: resposta.affectedRows };
+  });
+  if (copiar) await persistir();
+  return resultado;
+}
+
+export async function iniciarTransacaoPglite() {
+  await exclusivo(async () => {
+    await alinharComNuvem();
+    estadoBanco().tx += 1;
+  });
+}
+
+export async function concluirTransacaoPglite(commit: boolean) {
+  let copiar = false;
+  await exclusivo(async () => {
+    const estado = estadoBanco();
+    estado.tx = Math.max(0, estado.tx - 1);
+    if (estado.tx === 0 && commit && estado.sujou && estado.suspenso === 0) copiar = true;
+    if (estado.tx === 0) estado.sujou = false;
+  });
+  if (copiar) await persistir();
+}
+
+export async function semPersistencia<T>(fn: () => Promise<T>): Promise<T> {
+  const estado = estadoBanco();
+  estado.suspenso += 1;
+  try {
+    return await fn();
+  } finally {
+    estado.suspenso -= 1;
+  }
+}
+
+export async function copiarBancoAgora() {
+  if (dbSource !== "pglite") return;
+  const estado = estadoBanco();
+  estado.forcar = true;
+  try {
+    await persistir();
+  } finally {
+    estado.forcar = false;
+  }
+}
+
 if (typeof window === "undefined" && dbSource === "pglite") {
+  estadoBanco().migrado = false;
   globalBoot.__pgBootstrapPromise__ ??= ensureDbReady().catch((err) => {
     globalBoot.__pgBootstrapPromise__ = undefined;
     console.error("[db] PGLite bootstrap failed:", err);

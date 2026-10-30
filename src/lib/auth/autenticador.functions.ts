@@ -154,6 +154,12 @@ export const situacaoNavegador = createServerFn({ method: "POST" })
   })
   .handler(async ({ context, data }) => {
     const sql = await getSql();
+    const isentos = await sql<{ isento_2fa: boolean }>`
+      select isento_2fa from usuario_perfil where user_id = ${context.userId}
+    `;
+    if (isentos[0]?.isento_2fa === true) {
+      return { confiado: true, ativo: false, expiraEm: null as string | null };
+    }
     await tabelaNavegador(sql);
     const linhas = await sql<{ confirmado: boolean }>`
       select confirmado from autenticador where user_id = ${context.userId}
